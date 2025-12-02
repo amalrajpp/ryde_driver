@@ -86,12 +86,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
         'accepted_at': FieldValue.serverTimestamp(),
         'driver_id': currentUser!.uid,
         'driver_details': {
-          'name': dData['name'] ?? 'Ryde Driver',
+          'name': dData['driverName'] ?? 'Ryde Driver',
           'phone': dData['phone'] ?? '',
           'rating': (dData['rating'] as num?)?.toDouble() ?? 5.0,
           'image': dData['profile_image'] ?? 'https://i.pravatar.cc/150',
           'car_model': "${dVehicle['color'] ?? ''} ${dVehicle['model'] ?? ''}",
-          'plate_number': dVehicle['plate_number'] ?? '',
+          'plate_number': dVehicle['plate'] ?? '',
         },
         // Save driver's current location so user can draw the route immediately
         'driver_location_lat': (dLocation['lat'] as num?)?.toDouble() ?? 0.0,

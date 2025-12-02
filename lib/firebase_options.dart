@@ -63,6 +63,6 @@ class DefaultFirebaseOptions {
     messagingSenderId: '860909666780',
     projectId: 'ryde-f95e9',
     storageBucket: 'ryde-f95e9.firebasestorage.app',
-    iosBundleId: 'com.example.ryde',
+    iosBundleId: 'com.example.rydeagent',
   );
 }

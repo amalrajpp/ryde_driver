@@ -82,7 +82,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
       // 2. Update the booking
       await FirebaseFirestore.instance.collection('booking').doc(rideId).update({
-        'status': 'accepted',
+        'status': 'accepted', // This matches the new query filter
         'accepted_at': FieldValue.serverTimestamp(),
         'driver_id': currentUser!.uid,
         'driver_details': {
@@ -117,10 +117,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _declineRide(String rideId) async {
     try {
-      // In a real app, add driver ID to a 'rejected_by' array to hide it locally.
-      // For now, we just ignore it locally or set status if logic permits.
-      // Since this is broadcast, we typically DON'T change status to 'declined'
-      // unless we are the only driver.
       // Simple implementation: Just show a message
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -866,12 +862,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       stream: FirebaseFirestore.instance
           .collection('booking')
           .where('driver_id', isEqualTo: currentUser!.uid)
-          .where(
-            Filter.or(
-              Filter('status', isEqualTo: 'ongoing'),
-              Filter('status', isEqualTo: 'started'),
-            ),
-          )
+          // CHANGED: Added 'accepted' to whereIn so new rides appear immediately
+          .where('status', whereIn: ['accepted', 'ongoing', 'started'])
           .snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
@@ -1006,6 +998,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final vehicle = data['vehicle'] as Map<String, dynamic>? ?? {};
     final status = data['status'] as String? ?? '';
 
+    // CHANGED: Treat both 'accepted' and 'ongoing' as "Heading to Pickup"
+    bool isHeadingToPickup = status == 'accepted' || status == 'ongoing';
+
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
       padding: const EdgeInsets.all(16),
@@ -1031,8 +1026,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: ElevatedButton.icon(
               onPressed: () => _startNavigation(docId, data),
               icon: const Icon(Icons.navigation, color: Colors.white),
+              // CHANGED: Logic for button label
               label: Text(
-                status == "ongoing"
+                isHeadingToPickup
                     ? "Navigate to Pickup"
                     : "Navigate to Dropoff",
                 style: const TextStyle(
@@ -1046,11 +1042,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
           ),
-          if (status == 'ongoing') ...[
+          // CHANGED: Show Pickup confirmation if Heading to Pickup
+          if (isHeadingToPickup) ...[
             const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
+                // Clicking this sets status to 'started'
                 onPressed: () => _showProofBottomSheet(docId, 'started'),
                 icon: const Icon(Icons.camera_alt, color: Colors.white),
                 label: const Text(
@@ -1068,6 +1066,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
+                // Clicking this sets status to 'completed'
                 onPressed: () => _showProofBottomSheet(docId, 'completed'),
                 icon: const Icon(Icons.check_circle, color: Colors.white),
                 label: const Text(

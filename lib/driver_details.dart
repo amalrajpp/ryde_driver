@@ -173,6 +173,9 @@ class _DriverRegistrationScreenState extends State<DriverRegistrationScreen> {
           'pan_url': panUrl,
           'is_verified': false,
         },
+        'registeredOn': DateTime.now().toIso8601String(),
+        'isRegistered': true,
+        'working': 'unassigned',
       };
 
       // 3. Save to Firestore

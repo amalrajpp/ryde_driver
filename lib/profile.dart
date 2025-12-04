@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:ryde/driver_portal.dart';
 
 // Define color constants
 const Color kPrimaryYellow = Color(0xFFFFD700);
@@ -14,10 +15,26 @@ class ProfileTabContent extends StatelessWidget {
 
   // Helper to handle Logout
   Future<void> _handleLogout(BuildContext context) async {
-    await FirebaseAuth.instance.signOut();
-    // Assuming you have a wrapper that listens to Auth state,
-    // or you can manually navigate to login:
-    // Navigator.of(context).pushReplacementNamed('/login');
+    try {
+      // 1. Sign out from Firebase
+      await FirebaseAuth.instance.signOut();
+
+      // 2. Check if widget is still on screen (Async gap safety)
+      if (!context.mounted) return;
+
+      // 3. Navigate to Login and remove all previous screens from the stack
+      Navigator.of(context).pushAndRemoveUntil(
+        MaterialPageRoute(
+          builder: (context) => const MyApp(),
+        ), // ⚠️ Replace with your actual Login Class name
+        (Route<dynamic> route) =>
+            false, // This condition removes all previous routes
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Error logging out: $e")));
+    }
   }
 
   @override

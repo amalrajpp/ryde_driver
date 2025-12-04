@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -155,16 +156,53 @@ class _LoginScreenState extends State<LoginScreen> {
     }
   }
 
-  void _navigateToHome() {
-    // Navigate to next screen
+  // ... inside your widget class
+
+  Future<void> _navigateToHome() async {
+    // 1. Show success message immediately
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(const SnackBar(content: Text("Login Successful!")));
-    // Navigator.pushReplacement(...)
-    Navigator.pushReplacement(
-      context,
-      MaterialPageRoute(builder: (context) => DriverRegistrationScreen()),
-    );
+
+    try {
+      // 2. Get the current User ID
+      String uid = FirebaseAuth.instance.currentUser!.uid;
+
+      // 3. Fetch the driver's document from Firestore
+      DocumentSnapshot driverDoc = await FirebaseFirestore.instance
+          .collection('drivers')
+          .doc(uid)
+          .get();
+
+      // 4. Check if the widget is still on screen before navigating (Async gap safety)
+      if (!mounted) return;
+
+      // 5. Check if document exists AND isRegistered is true
+      if (driverDoc.exists && driverDoc.get('isRegistered') == true) {
+        // Condition Met: Go to Home Screen
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const DriverDashboardApp(),
+          ), // Replace with your actual Home Screen
+        );
+      } else {
+        // Condition Failed: Go to Registration Screen
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const DriverRegistrationScreen(),
+          ),
+        );
+      }
+    } catch (e) {
+      // Handle errors (e.g., network issues)
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error fetching account: $e")));
+      }
+    }
   }
 
   void _changeNumber() {

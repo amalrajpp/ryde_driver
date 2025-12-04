@@ -1,5 +1,5 @@
 import 'dart:io';
-import 'dart:convert'; // Required for jsonDecode
+import 'dart:convert'; // Required for jsonDecode & encode
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -18,9 +18,83 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final User? currentUser = FirebaseAuth.instance.currentUser;
 
+  // --- ADDED: Local list to track declined ride IDs ---
+  final List<String> _declinedRideIds = [];
+
   // ⚠️ CONFIGURATION: REPLACE THESE WITH YOUR ACTUAL CLOUDINARY KEYS
   final String _cloudName = "dm9b7873j";
   final String _uploadPreset = "rydeapp";
+
+  // ⚠️ CONFIGURATION: YOUR NOTIFICATION SERVER URL
+  //final String _notificationServerUrl = "https://ryde01-2.onrender.com/send-single";
+  final String _notificationServerUrl = "http://192.168.20.4:3000/send-single";
+
+  // --- NOTIFICATION HELPER (DEBUGGING VERSION) ---
+
+  Future<void> _sendNotification(
+    String customerId,
+    String title,
+    String body,
+  ) async {
+    try {
+      debugPrint("--- STARTING NOTIFICATION SEND ---");
+      debugPrint("Target Customer ID: $customerId");
+
+      // 1. Fetch Customer's FCM Token from 'users' collection
+      final doc = await FirebaseFirestore.instance
+          .collection("users")
+          .doc(customerId)
+          .get();
+
+      if (!doc.exists) {
+        debugPrint("❌ Error: User document does not exist for ID: $customerId");
+        return;
+      }
+
+      final data = doc.data() as Map<String, dynamic>;
+
+      // Check if key exists and is not null/empty
+      String? token = data["fcmToken"];
+
+      if (token == null || token.trim().isEmpty) {
+        debugPrint(
+          "❌ Error: FCM Token is null or empty for customer: $customerId",
+        );
+        // NOTE: If this prints, the customer needs to log in again to save their token.
+        return;
+      }
+
+      debugPrint(
+        "✅ Found Token: ${token.substring(0, 10)}...",
+      ); // Print partial token for safety
+
+      // 2. Prepare Payload
+      final Map<String, dynamic> payload = {
+        "token": token,
+        "title": title,
+        "body": body,
+      };
+
+      final String jsonPayload = jsonEncode(payload);
+      debugPrint("📤 Sending Payload: $jsonPayload");
+
+      // 3. Send HTTP POST Request
+      final response = await http.post(
+        Uri.parse(_notificationServerUrl),
+        headers: {"Content-Type": "application/json; charset=UTF-8"},
+        body: jsonPayload,
+      );
+
+      debugPrint("📥 Server Response Code: ${response.statusCode}");
+      debugPrint("📥 Server Response Body: ${response.body}");
+
+      if (response.statusCode != 200 && response.statusCode != 201) {
+        debugPrint("⚠️ Notification Failed. Server returned non-200 code.");
+      }
+    } catch (e) {
+      debugPrint("❌ Critical Error sending notification: $e");
+    }
+  }
 
   // --- ACTIONS ---
 
@@ -28,7 +102,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     if (currentUser == null) return;
     String newStatus = currentStatus ? 'offline' : 'online';
     try {
-      // If going online, update location first to ensure fresh data
       if (newStatus == 'online') {
         Position position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high,
@@ -63,12 +136,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  // --- ACCEPT RIDE (Writes Driver Details) ---
+  // --- ACCEPT RIDE (Writes Driver Details & Notifies User) ---
   Future<void> _acceptRide(String rideId) async {
     if (currentUser == null) return;
 
     try {
-      // 1. Fetch current driver details
+      // 1. Fetch Booking to get Customer ID
+      DocumentSnapshot bookingDoc = await FirebaseFirestore.instance
+          .collection('booking')
+          .doc(rideId)
+          .get();
+
+      String? customerId;
+      if (bookingDoc.exists) {
+        customerId = (bookingDoc.data() as Map<String, dynamic>)['customer_id'];
+      }
+
+      // 2. Fetch current driver details
       DocumentSnapshot driverDoc = await FirebaseFirestore.instance
           .collection('drivers')
           .doc(currentUser!.uid)
@@ -80,23 +164,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final dVehicle = dData['vehicle'] as Map<String, dynamic>? ?? {};
       final dLocation = dData['location'] as Map<String, dynamic>? ?? {};
 
-      // 2. Update the booking
-      await FirebaseFirestore.instance.collection('booking').doc(rideId).update({
-        'status': 'accepted', // This matches the new query filter
-        'accepted_at': FieldValue.serverTimestamp(),
-        'driver_id': currentUser!.uid,
-        'driver_details': {
-          'name': dData['driverName'] ?? 'Ryde Driver',
-          'phone': dData['phone'] ?? '',
-          'rating': (dData['rating'] as num?)?.toDouble() ?? 5.0,
-          'image': dData['profile_image'] ?? 'https://i.pravatar.cc/150',
-          'car_model': "${dVehicle['color'] ?? ''} ${dVehicle['model'] ?? ''}",
-          'plate_number': dVehicle['plate'] ?? '',
+      // 3. Update the booking
+      await FirebaseFirestore.instance.collection('booking').doc(rideId).update(
+        {
+          'status': 'accepted',
+          'accepted_at': FieldValue.serverTimestamp(),
+          'driver_id': currentUser!.uid,
+          'driver_details': {
+            'name': dData['driverName'] ?? 'Ryde Driver',
+            'phone': dData['phone'] ?? '',
+            'rating': (dData['rating'] as num?)?.toDouble() ?? 5.0,
+            'image': dData['profile_image'] ?? 'https://i.pravatar.cc/150',
+            'car_model':
+                "${dVehicle['color'] ?? ''} ${dVehicle['model'] ?? ''}",
+            'plate_number': dVehicle['plate'] ?? '',
+          },
+          'driver_location_lat': (dLocation['lat'] as num?)?.toDouble() ?? 0.0,
+          'driver_location_lng': (dLocation['lng'] as num?)?.toDouble() ?? 0.0,
         },
-        // Save driver's current location so user can draw the route immediately
-        'driver_location_lat': (dLocation['lat'] as num?)?.toDouble() ?? 0.0,
-        'driver_location_lng': (dLocation['lng'] as num?)?.toDouble() ?? 0.0,
-      });
+      );
+
+      await FirebaseFirestore.instance
+          .collection('drivers')
+          .doc(currentUser!.uid)
+          .update({'working': 'assigned'});
+
+      // 4. Send Notification
+      if (customerId != null) {
+        _sendNotification(
+          customerId,
+          "Ride Accepted",
+          "Your driver ${dData['driverName'] ?? ''} is on the way!",
+        );
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -117,18 +217,44 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Future<void> _declineRide(String rideId) async {
     try {
-      // Simple implementation: Just show a message
+      // 1. Fetch Booking to get Customer ID (Optional, if you want to notify on decline)
+      DocumentSnapshot bookingDoc = await FirebaseFirestore.instance
+          .collection('booking')
+          .doc(rideId)
+          .get();
+
+      String? customerId;
+      if (bookingDoc.exists) {
+        customerId = (bookingDoc.data() as Map<String, dynamic>)['customer_id'];
+      }
+
+      // 2. Send Notification
+      if (customerId != null) {
+        _sendNotification(
+          customerId,
+          "Driver Unavailable",
+          "The driver declined the request. Searching for others...",
+        );
+      }
+
+      // --- ADDED: Update local state to hide the ride immediately ---
+      setState(() {
+        _declinedRideIds.add(rideId);
+      });
+
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text("Ride hidden (Refresh to remove from list)"),
+          content: Text("Ride declined"),
+          duration: Duration(seconds: 1),
         ),
       );
     } catch (e) {
       // Handle error
+      debugPrint("Error declining ride: $e");
     }
   }
 
-  // --- CLOUDINARY UPLOAD LOGIC ---
+  // --- CLOUDINARY UPLOAD LOGIC & NOTIFICATION ---
 
   Future<void> _uploadProofAndConfirm(
     String rideId,
@@ -151,6 +277,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final jsonMap = jsonDecode(responseData);
         String downloadUrl = jsonMap['secure_url'];
 
+        // 1. Update Firestore
         await FirebaseFirestore.instance
             .collection('booking')
             .doc(rideId)
@@ -163,12 +290,43 @@ class _DashboardScreenState extends State<DashboardScreen> {
               if (newStatus == 'started') 'pickup_proof_url': downloadUrl,
               if (newStatus == 'completed') 'delivery_proof_url': downloadUrl,
             });
+        if (newStatus == 'completed') {
+          await FirebaseFirestore.instance
+              .collection('drivers')
+              .doc(currentUser!.uid)
+              .update({'working': 'unassigned'});
+        }
+        // 2. Fetch Customer ID to Send Notification
+        DocumentSnapshot bookingDoc = await FirebaseFirestore.instance
+            .collection('booking')
+            .doc(rideId)
+            .get();
+        String? customerId =
+            (bookingDoc.data() as Map<String, dynamic>)['customer_id'];
 
         if (mounted) {
           Navigator.pop(context);
-          String message = newStatus == 'started'
-              ? "Pickup Confirmed! Heading to Dropoff."
-              : "Delivery Confirmed! Ride Completed.";
+          String message = "";
+
+          if (newStatus == 'started') {
+            message = "Pickup Confirmed! Heading to Dropoff.";
+            if (customerId != null) {
+              _sendNotification(
+                customerId,
+                "Pickup Confirmed",
+                "Your package has been picked up!",
+              );
+            }
+          } else {
+            message = "Delivery Confirmed! Ride Completed.";
+            if (customerId != null) {
+              _sendNotification(
+                customerId,
+                "Delivered",
+                "Your package has been successfully delivered.",
+              );
+            }
+          }
 
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(content: Text(message), backgroundColor: Colors.green),
@@ -862,7 +1020,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       stream: FirebaseFirestore.instance
           .collection('booking')
           .where('driver_id', isEqualTo: currentUser!.uid)
-          // CHANGED: Added 'accepted' to whereIn so new rides appear immediately
           .where('status', whereIn: ['accepted', 'ongoing', 'started'])
           .snapshots(),
       builder: (context, snapshot) {
@@ -893,9 +1050,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // --- UPDATED: NEARBY FILTER LOGIC (5km Radius) ---
   Widget _buildAvailableRidesList(Map<String, dynamic> driverData) {
-    // 1. Get Driver Vehicle Type & Location
     final driverVehicle = driverData['vehicle'] as Map<String, dynamic>? ?? {};
     final String myVehicleType =
         driverVehicle['vehicle_type']?.toString().toLowerCase() ?? 'car';
@@ -915,7 +1070,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         StreamBuilder<QuerySnapshot>(
           stream: FirebaseFirestore.instance
               .collection('booking')
-              // Only fetch rides that are 'pending' and match my vehicle type
               .where('status', isEqualTo: 'pending')
               .where('vehicle_type', isEqualTo: myVehicleType)
               .snapshots(),
@@ -928,8 +1082,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
               return _buildEmptyState("No requests found");
             }
 
-            // --- GEO-FILTERING ---
             final nearbyDocs = snapshot.data!.docs.where((doc) {
+              // --- ADDED: Filter out declined rides ---
+              if (_declinedRideIds.contains(doc.id)) {
+                return false;
+              }
+
               final data = doc.data() as Map<String, dynamic>;
               final route = data['route'] as Map<String, dynamic>? ?? {};
 
@@ -940,7 +1098,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
               if (driverLat == 0.0 || pickupLat == 0.0) return false;
 
-              // Calculate distance in METERS
               double distanceInMeters = Geolocator.distanceBetween(
                 driverLat,
                 driverLng,
@@ -948,7 +1105,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 pickupLng,
               );
 
-              // 5000 meters = 5 km radius
               return distanceInMeters <= 5000;
             }).toList();
 
@@ -998,7 +1154,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final vehicle = data['vehicle'] as Map<String, dynamic>? ?? {};
     final status = data['status'] as String? ?? '';
 
-    // CHANGED: Treat both 'accepted' and 'ongoing' as "Heading to Pickup"
     bool isHeadingToPickup = status == 'accepted' || status == 'ongoing';
 
     return Container(
@@ -1026,7 +1181,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             child: ElevatedButton.icon(
               onPressed: () => _startNavigation(docId, data),
               icon: const Icon(Icons.navigation, color: Colors.white),
-              // CHANGED: Logic for button label
               label: Text(
                 isHeadingToPickup
                     ? "Navigate to Pickup"
@@ -1042,13 +1196,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               ),
             ),
           ),
-          // CHANGED: Show Pickup confirmation if Heading to Pickup
           if (isHeadingToPickup) ...[
             const SizedBox(height: 10),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                // Clicking this sets status to 'started'
                 onPressed: () => _showProofBottomSheet(docId, 'started'),
                 icon: const Icon(Icons.camera_alt, color: Colors.white),
                 label: const Text(
@@ -1066,7 +1218,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                // Clicking this sets status to 'completed'
                 onPressed: () => _showProofBottomSheet(docId, 'completed'),
                 icon: const Icon(Icons.check_circle, color: Colors.white),
                 label: const Text(

@@ -26,8 +26,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   final String _uploadPreset = "rydeapp";
 
   // ⚠️ CONFIGURATION: YOUR NOTIFICATION SERVER URL
-  //final String _notificationServerUrl = "https://ryde01-2.onrender.com/send-single";
-  final String _notificationServerUrl = "http://192.168.20.4:3000/send-single";
+  final String _notificationServerUrl =
+      "https://ryde-notifications.onrender.com/send-single";
+  //final String _notificationServerUrl = "http://192.168.20.4:3000/send-single";
 
   // --- NOTIFICATION HELPER (DEBUGGING VERSION) ---
 

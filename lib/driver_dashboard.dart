@@ -103,7 +103,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
       // ANDROID SPECIFIC SETTINGS
       locationSettings = AndroidSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 0, // Update if moved 10 meters (helps battery)
+        distanceFilter: 1, // Update if moved 10 meters (helps battery)
         forceLocationManager: true,
         intervalDuration: const Duration(seconds: 10), // Force update every 10s
         // Foreground Notification Config (REQUIRED for background access)

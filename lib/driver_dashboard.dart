@@ -1,10 +1,12 @@
+import 'dart:async';
+import 'package:flutter/foundation.dart'; // For defaultTargetPlatform
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 
-// Assuming these exist based on your imports
+// Your existing imports
 import 'package:ryde/dashboard.dart';
 import 'package:ryde/earnings.dart';
 import 'package:ryde/profile.dart';
@@ -14,7 +16,6 @@ const Color kPrimaryYellow = Color(0xFFFFD700);
 const Color kDarkText = Color(0xFF212121);
 const Color kLightText = Color(0xFF757575);
 const Color kBgColor = Color(0xFFF9F9F9);
-const Color kIconBoxBg = Color(0xFFF0F0F0);
 
 class DriverDashboardApp extends StatelessWidget {
   const DriverDashboardApp({super.key});
@@ -54,90 +55,97 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
+  // Stream Subscription for handling location updates
+  StreamSubscription<Position>? _positionStreamSubscription;
+
   @override
   void initState() {
     super.initState();
-
     _tabController = TabController(length: 3, vsync: this, initialIndex: 0);
 
-    // LOCATION UPDATE
-    _updateDriverLocation();
-
-    // 🔥 NEW: FCM TOKEN SETUP
+    // 1. Setup FCM
     _saveDeviceToken();
     _listenForTokenRefresh();
+
+    // 2. Start Live Location Tracking (Foreground & Background)
+    _startLocationUpdates();
   }
 
   // -------------------------------------------------------------------------
-  // 🔥 1. SAVE FCM TOKEN TO FIRESTORE
+  // 🔥 LIVE LOCATION UPDATES (FOREGROUND & BACKGROUND)
   // -------------------------------------------------------------------------
-  Future<void> _saveDeviceToken() async {
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
-
-      // Ask notification permission (iOS + Android 13)
-      await FirebaseMessaging.instance.requestPermission();
-
-      // Get token
-      final String? token = await FirebaseMessaging.instance.getToken();
-
-      if (token != null) {
-        await FirebaseFirestore.instance
-            .collection('drivers')
-            .doc(user.uid)
-            .set({'fcmToken': token}, SetOptions(merge: true));
-
-        debugPrint("FCM Token Saved: $token");
-      }
-    } catch (e) {
-      debugPrint("Error saving FCM token: $e");
+  Future<void> _startLocationUpdates() async {
+    // A. Check Services
+    bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      debugPrint("Location services are disabled.");
+      return;
     }
-  }
 
-  // -------------------------------------------------------------------------
-  // 🔥 2. LISTEN FOR TOKEN AUTO REFRESH
-  // -------------------------------------------------------------------------
-  void _listenForTokenRefresh() {
-    FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
-
-      await FirebaseFirestore.instance
-          .collection('drivers')
-          .doc(user.uid)
-          .update({'fcmToken': newToken});
-
-      debugPrint("FCM Token Updated (refreshed): $newToken");
-    });
-  }
-
-  // -------------------------------------------------------------------------
-  // LOCATION UPDATE LOGIC
-  // -------------------------------------------------------------------------
-  Future<void> _updateDriverLocation() async {
-    try {
-      // A. Check Services
-      bool serviceEnabled = await Geolocator.isLocationServiceEnabled();
-      if (!serviceEnabled) return;
-
-      // B. Check Permissions
-      LocationPermission permission = await Geolocator.checkPermission();
+    // B. Check Permissions
+    LocationPermission permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
       if (permission == LocationPermission.denied) {
-        permission = await Geolocator.requestPermission();
-        if (permission == LocationPermission.denied) return;
+        debugPrint("Location permissions are denied");
+        return;
       }
-      if (permission == LocationPermission.deniedForever) return;
+    }
+    if (permission == LocationPermission.deniedForever) {
+      debugPrint("Location permissions are permanently denied");
+      return;
+    }
 
-      // C. Get Current Position
-      Position position = await Geolocator.getCurrentPosition(
-        desiredAccuracy: LocationAccuracy.high,
+    // C. Define Location Settings for Background Support
+    LocationSettings locationSettings;
+
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      // ANDROID SPECIFIC SETTINGS
+      locationSettings = AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 0, // Update if moved 10 meters (helps battery)
+        forceLocationManager: true,
+        intervalDuration: const Duration(seconds: 10), // Force update every 10s
+        // Foreground Notification Config (REQUIRED for background access)
+        foregroundNotificationConfig: const ForegroundNotificationConfig(
+          notificationTitle: "Ryde Driver",
+          notificationText: "Tracking your location for rides...",
+          notificationIcon: AndroidResource(
+            name: 'ic_launcher',
+          ), // Ensure this icon exists
+          enableWakeLock: true, // Keeps CPU awake for updates
+        ),
       );
+    } else if (defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.macOS) {
+      // IOS SPECIFIC SETTINGS
+      locationSettings = AppleSettings(
+        accuracy: LocationAccuracy.high,
+        activityType: ActivityType.automotiveNavigation,
+        distanceFilter: 10,
+        pauseLocationUpdatesAutomatically: false, // Important for background
+        showBackgroundLocationIndicator: true,
+      );
+    } else {
+      locationSettings = const LocationSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 10,
+      );
+    }
 
-      // D. Update Firestore
-      User? user = FirebaseAuth.instance.currentUser;
+    // D. Start Listening to the Stream
+    _positionStreamSubscription =
+        Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+          (Position position) {
+            _updateFirestoreLocation(position);
+          },
+        );
+  }
 
-      if (user != null) {
+  Future<void> _updateFirestoreLocation(Position position) async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user != null) {
+      try {
         await FirebaseFirestore.instance
             .collection('drivers')
             .doc(user.uid)
@@ -147,21 +155,54 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
                 'lng': position.longitude,
                 'heading': position.heading,
               },
-              'status': 'online',
+              // We don't force 'status' here to avoid overwriting 'offline' if set manually
               'last_updated': FieldValue.serverTimestamp(),
             });
-
         debugPrint(
-          "Location updated: ${position.latitude}, ${position.longitude}",
+          "📍 Location Updated: ${position.latitude}, ${position.longitude}",
         );
+      } catch (e) {
+        debugPrint("Error pushing location to Firestore: $e");
+      }
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // FCM TOKEN LOGIC
+  // -------------------------------------------------------------------------
+  Future<void> _saveDeviceToken() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+      await FirebaseMessaging.instance.requestPermission();
+      final String? token = await FirebaseMessaging.instance.getToken();
+      if (token != null) {
+        await FirebaseFirestore.instance
+            .collection('drivers')
+            .doc(user.uid)
+            .set({'fcmToken': token}, SetOptions(merge: true));
       }
     } catch (e) {
-      debugPrint("Error updating location: $e");
+      debugPrint("Error saving FCM token: $e");
     }
+  }
+
+  void _listenForTokenRefresh() {
+    FirebaseMessaging.instance.onTokenRefresh.listen((newToken) async {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null) {
+        await FirebaseFirestore.instance
+            .collection('drivers')
+            .doc(user.uid)
+            .update({'fcmToken': newToken});
+      }
+    });
   }
 
   @override
   void dispose() {
+    // Stop tracking when the dashboard is completely closed (e.g. logout)
+    _positionStreamSubscription?.cancel();
     _tabController.dispose();
     super.dispose();
   }

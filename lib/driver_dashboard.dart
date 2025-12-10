@@ -213,11 +213,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
       appBar: AppBar(
         centerTitle: true,
         title: const Text('Driver Dashboard'),
-        actions: [
-          IconButton(icon: const Icon(Icons.list), onPressed: () {}),
-          IconButton(icon: const Icon(Icons.person), onPressed: () {}),
-          const SizedBox(width: 8),
-        ],
+
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(48.0),
           child: Container(
@@ -240,11 +236,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
       ),
       body: TabBarView(
         controller: _tabController,
-        children: const [
-          DashboardScreen(),
-          EarningScreen(),
-          ProfileTabContent(),
-        ],
+        children: const [DashboardScreen(), EarningsScreen(), AccountScreen()],
       ),
     );
   }

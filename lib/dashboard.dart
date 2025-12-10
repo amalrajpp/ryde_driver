@@ -886,6 +886,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         const SizedBox(height: 20),
                         // 3. Available Rides (Geo-filtered)
                         _buildAvailableRidesList(driverData),
+                        const SizedBox(height: 30),
+                        // 4. Recent Rides History
+                        _buildRecentRidesList(),
                       ] else
                         _buildOfflineView(isOnline),
                     ],
@@ -1146,6 +1149,189 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ],
       ),
     );
+  }
+
+  Widget _buildRecentRidesList() {
+    return StreamBuilder<QuerySnapshot>(
+      stream: FirebaseFirestore.instance
+          .collection('booking')
+          .where('driver_id', isEqualTo: currentUser!.uid)
+          .where('status', whereIn: ['completed', 'cancelled'])
+          .orderBy('created_at', descending: true)
+          .limit(10)
+          .snapshots(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(child: CircularProgressIndicator());
+        }
+
+        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+          return const SizedBox();
+        }
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              "Recent Rides",
+              style: TextStyle(
+                fontSize: 20,
+                fontWeight: FontWeight.bold,
+                color: Colors.black87,
+              ),
+            ),
+            const SizedBox(height: 15),
+            ...snapshot.data!.docs.map((doc) {
+              final data = doc.data() as Map<String, dynamic>;
+              final docId = doc.id;
+              final status = data['status'] ?? 'unknown';
+              final createdAt = data['created_at'] as Timestamp?;
+              final price = (data['price'] as num?)?.toDouble() ?? 0.0;
+              final route = data['route'] as Map<String, dynamic>? ?? {};
+              final pickupAddress = route['pickup_address'] ?? 'Unknown';
+              final dropoffAddress = route['dropoff_address'] ?? 'Unknown';
+
+              final shortId = docId.length > 4
+                  ? docId.substring(docId.length - 4)
+                  : docId;
+              final dateStr = createdAt != null
+                  ? _formatDate(createdAt.toDate())
+                  : 'Unknown date';
+              final statusColor = status == 'completed'
+                  ? const Color(0xFF27AE60)
+                  : const Color(0xFFE74C3C);
+              final statusIcon = status == 'completed'
+                  ? Icons.check_circle
+                  : Icons.cancel;
+
+              return Container(
+                margin: const EdgeInsets.only(bottom: 12),
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Ride #$shortId',
+                          style: const TextStyle(
+                            color: Color(0xFF2D3436),
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Row(
+                          children: [
+                            Icon(statusIcon, color: statusColor, size: 18),
+                            const SizedBox(width: 6),
+                            Text(
+                              status.toUpperCase(),
+                              style: TextStyle(
+                                color: statusColor,
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      dateStr,
+                      style: const TextStyle(
+                        color: Color(0xFFA4AAB3),
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.circle, color: Colors.blue, size: 10),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            pickupAddress,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              color: Colors.black87,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Icon(Icons.square, color: Colors.green, size: 10),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Text(
+                            dropoffAddress,
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: Colors.grey[600],
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          'Price',
+                          style: TextStyle(
+                            color: Colors.grey[600],
+                            fontSize: 12,
+                          ),
+                        ),
+                        Text(
+                          '₹${price.toStringAsFixed(2)}',
+                          style: const TextStyle(
+                            color: Color(0xFF27AE60),
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              );
+            }).toList(),
+          ],
+        );
+      },
+    );
+  }
+
+  String _formatDate(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = DateTime(now.year, now.month, now.day - 1);
+    final dateToCheck = DateTime(date.year, date.month, date.day);
+
+    if (dateToCheck == today) {
+      return 'Today ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    } else if (dateToCheck == yesterday) {
+      return 'Yesterday ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    } else {
+      return '${date.day}/${date.month}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    }
   }
 
   // --- CARDS ---

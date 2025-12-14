@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:convert'; // Required for jsonDecode & encode
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart'; // Required for OTP Input Formatter
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http; // Use standard HTTP package
@@ -17,88 +18,43 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   final User? currentUser = FirebaseAuth.instance.currentUser;
-
-  // --- ADDED: Local list to track declined ride IDs ---
   final List<String> _declinedRideIds = [];
 
-  // ⚠️ CONFIGURATION: REPLACE THESE WITH YOUR ACTUAL CLOUDINARY KEYS
+  // ⚠️ CONFIGURATION: REPLACE THESE WITH YOUR ACTUAL KEYS
   final String _cloudName = "dm9b7873j";
   final String _uploadPreset = "rydeapp";
-
-  // ⚠️ CONFIGURATION: YOUR NOTIFICATION SERVER URL
   final String _notificationServerUrl =
       "https://ryde-notifications.onrender.com/send-single";
-  //final String _notificationServerUrl = "http://192.168.20.4:3000/send-single";
 
-  // --- NOTIFICATION HELPER (DEBUGGING VERSION) ---
-
+  // --- NOTIFICATION HELPER ---
   Future<void> _sendNotification(
     String customerId,
     String title,
     String body,
   ) async {
     try {
-      debugPrint("--- STARTING NOTIFICATION SEND ---");
-      debugPrint("Target Customer ID: $customerId");
-
-      // 1. Fetch Customer's FCM Token from 'users' collection
       final doc = await FirebaseFirestore.instance
           .collection("users")
           .doc(customerId)
           .get();
 
-      if (!doc.exists) {
-        debugPrint("❌ Error: User document does not exist for ID: $customerId");
-        return;
-      }
-
+      if (!doc.exists) return;
       final data = doc.data() as Map<String, dynamic>;
-
-      // Check if key exists and is not null/empty
       String? token = data["fcmToken"];
 
-      if (token == null || token.trim().isEmpty) {
-        debugPrint(
-          "❌ Error: FCM Token is null or empty for customer: $customerId",
-        );
-        // NOTE: If this prints, the customer needs to log in again to save their token.
-        return;
-      }
+      if (token == null || token.trim().isEmpty) return;
 
-      debugPrint(
-        "✅ Found Token: ${token.substring(0, 10)}...",
-      ); // Print partial token for safety
-
-      // 2. Prepare Payload
-      final Map<String, dynamic> payload = {
-        "token": token,
-        "title": title,
-        "body": body,
-      };
-
-      final String jsonPayload = jsonEncode(payload);
-      debugPrint("📤 Sending Payload: $jsonPayload");
-
-      // 3. Send HTTP POST Request
-      final response = await http.post(
+      await http.post(
         Uri.parse(_notificationServerUrl),
         headers: {"Content-Type": "application/json; charset=UTF-8"},
-        body: jsonPayload,
+        body: jsonEncode({"token": token, "title": title, "body": body}),
       );
-
-      debugPrint("📥 Server Response Code: ${response.statusCode}");
-      debugPrint("📥 Server Response Body: ${response.body}");
-
-      if (response.statusCode != 200 && response.statusCode != 201) {
-        debugPrint("⚠️ Notification Failed. Server returned non-200 code.");
-      }
     } catch (e) {
-      debugPrint("❌ Critical Error sending notification: $e");
+      debugPrint("Error sending notification: $e");
     }
   }
 
   // --- ACTIONS ---
-
   Future<void> _toggleStatus(bool currentStatus) async {
     if (currentUser == null) return;
     String newStatus = currentStatus ? 'offline' : 'online';
@@ -132,40 +88,33 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text("Error updating status: $e")));
+        ).showSnackBar(SnackBar(content: Text("Error: $e")));
       }
     }
   }
 
-  // --- ACCEPT RIDE (Writes Driver Details & Notifies User) ---
   Future<void> _acceptRide(String rideId) async {
     if (currentUser == null) return;
-
     try {
-      // 1. Fetch Booking to get Customer ID
       DocumentSnapshot bookingDoc = await FirebaseFirestore.instance
           .collection('booking')
           .doc(rideId)
           .get();
-
       String? customerId;
       if (bookingDoc.exists) {
         customerId = (bookingDoc.data() as Map<String, dynamic>)['customer_id'];
       }
 
-      // 2. Fetch current driver details
       DocumentSnapshot driverDoc = await FirebaseFirestore.instance
           .collection('drivers')
           .doc(currentUser!.uid)
           .get();
-
       if (!driverDoc.exists) return;
 
       final dData = driverDoc.data() as Map<String, dynamic>;
       final dVehicle = dData['vehicle'] as Map<String, dynamic>? ?? {};
       final dLocation = dData['location'] as Map<String, dynamic>? ?? {};
 
-      // 3. Update the booking
       await FirebaseFirestore.instance.collection('booking').doc(rideId).update(
         {
           'status': 'accepted',
@@ -190,7 +139,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           .doc(currentUser!.uid)
           .update({'working': 'assigned'});
 
-      // 4. Send Notification
       if (customerId != null) {
         _sendNotification(
           customerId,
@@ -198,65 +146,93 @@ class _DashboardScreenState extends State<DashboardScreen> {
           "Your driver ${dData['driverName'] ?? ''} is on the way!",
         );
       }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text("Ride Accepted! Navigate to Pickup."),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text("Error accepting ride: $e")));
-      }
+      debugPrint("Error accepting ride: $e");
     }
   }
 
   Future<void> _declineRide(String rideId) async {
-    try {
-      // 1. Fetch Booking to get Customer ID (Optional, if you want to notify on decline)
-      DocumentSnapshot bookingDoc = await FirebaseFirestore.instance
-          .collection('booking')
-          .doc(rideId)
-          .get();
-
-      String? customerId;
-      if (bookingDoc.exists) {
-        customerId = (bookingDoc.data() as Map<String, dynamic>)['customer_id'];
-      }
-
-      // 2. Send Notification
-      if (customerId != null) {
-        _sendNotification(
-          customerId,
-          "Driver Unavailable",
-          "The driver declined the request. Searching for others...",
-        );
-      }
-
-      // --- ADDED: Update local state to hide the ride immediately ---
-      setState(() {
-        _declinedRideIds.add(rideId);
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text("Ride declined"),
-          duration: Duration(seconds: 1),
-        ),
-      );
-    } catch (e) {
-      // Handle error
-      debugPrint("Error declining ride: $e");
-    }
+    setState(() {
+      _declinedRideIds.add(rideId);
+    });
   }
 
-  // --- CLOUDINARY UPLOAD LOGIC & NOTIFICATION ---
+  // --- OTP DIALOG LOGIC ---
+  Future<void> _showOtpVerificationDialog({
+    required BuildContext context,
+    required String requiredOtp,
+    required String title,
+    required VoidCallback onSuccess,
+  }) async {
+    final TextEditingController otpController = TextEditingController();
+    String? errorText;
 
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              title: Text(title),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text("Ask the customer for the 4-digit PIN."),
+                  const SizedBox(height: 15),
+                  TextField(
+                    controller: otpController,
+                    keyboardType: TextInputType.number,
+                    maxLength: 4,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                      letterSpacing: 5,
+                    ),
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: InputDecoration(
+                      hintText: "0000",
+                      errorText: errorText,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      counterText: "",
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text("Cancel"),
+                ),
+                ElevatedButton(
+                  onPressed: () {
+                    if (otpController.text == requiredOtp) {
+                      Navigator.pop(context); // Close dialog
+                      onSuccess(); // Run success callback
+                    } else {
+                      setState(() {
+                        errorText = "Incorrect PIN";
+                      });
+                    }
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.black,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text("Verify"),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  // --- CLOUDINARY UPLOAD LOGIC ---
   Future<void> _uploadProofAndConfirm(
     String rideId,
     String newStatus,
@@ -266,11 +242,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
       final url = Uri.parse(
         'https://api.cloudinary.com/v1_1/$_cloudName/image/upload',
       );
-
       final request = http.MultipartRequest('POST', url)
         ..fields['upload_preset'] = _uploadPreset
         ..files.add(await http.MultipartFile.fromPath('file', imageFile.path));
-
       final response = await request.send();
 
       if (response.statusCode == 200) {
@@ -278,26 +252,24 @@ class _DashboardScreenState extends State<DashboardScreen> {
         final jsonMap = jsonDecode(responseData);
         String downloadUrl = jsonMap['secure_url'];
 
-        // 1. Update Firestore
-        await FirebaseFirestore.instance
-            .collection('booking')
-            .doc(rideId)
-            .update({
-              'status': newStatus,
-              if (newStatus == 'started')
-                'started_at': FieldValue.serverTimestamp(),
-              if (newStatus == 'completed')
-                'completed_at': FieldValue.serverTimestamp(),
-              if (newStatus == 'started') 'pickup_proof_url': downloadUrl,
-              if (newStatus == 'completed') 'delivery_proof_url': downloadUrl,
-            });
+        await FirebaseFirestore.instance.collection('booking').doc(rideId).update({
+          // Update status: 'started' means Pickup Done (In Progress), 'completed' means Dropoff Done
+          'status': newStatus == 'started' ? 'in_progress' : 'completed',
+          if (newStatus == 'started')
+            'started_at': FieldValue.serverTimestamp(),
+          if (newStatus == 'completed')
+            'completed_at': FieldValue.serverTimestamp(),
+          if (newStatus == 'started') 'pickup_proof_url': downloadUrl,
+          if (newStatus == 'completed') 'delivery_proof_url': downloadUrl,
+        });
+
         if (newStatus == 'completed') {
           await FirebaseFirestore.instance
               .collection('drivers')
               .doc(currentUser!.uid)
               .update({'working': 'unassigned'});
         }
-        // 2. Fetch Customer ID to Send Notification
+
         DocumentSnapshot bookingDoc = await FirebaseFirestore.instance
             .collection('booking')
             .doc(rideId)
@@ -306,35 +278,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
             (bookingDoc.data() as Map<String, dynamic>)['customer_id'];
 
         if (mounted) {
-          Navigator.pop(context);
-          String message = "";
-
-          if (newStatus == 'started') {
-            message = "Pickup Confirmed! Heading to Dropoff.";
-            if (customerId != null) {
-              _sendNotification(
-                customerId,
-                "Pickup Confirmed",
-                "Your package has been picked up!",
-              );
-            }
-          } else {
-            message = "Delivery Confirmed! Ride Completed.";
-            if (customerId != null) {
-              _sendNotification(
-                customerId,
-                "Delivered",
-                "Your package has been successfully delivered.",
-              );
-            }
+          Navigator.pop(context); // Close Sheet
+          if (newStatus == 'started' && customerId != null) {
+            _sendNotification(
+              customerId,
+              "Pickup Confirmed",
+              "Your package has been picked up!",
+            );
+          } else if (customerId != null) {
+            _sendNotification(
+              customerId,
+              "Delivered",
+              "Your package has been successfully delivered.",
+            );
           }
-
           ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text(message), backgroundColor: Colors.green),
+            SnackBar(
+              content: Text(
+                newStatus == 'started' ? "Pickup Confirmed" : "Ride Completed",
+              ),
+              backgroundColor: Colors.green,
+            ),
           );
         }
       } else {
-        throw Exception("Cloudinary Error: ${response.statusCode}");
+        throw Exception("Cloudinary Error");
       }
     } catch (e) {
       if (mounted) {
@@ -344,8 +312,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       }
     }
   }
-
-  // --- BOTTOM SHEETS ---
 
   void _showProofBottomSheet(String rideId, String newStatus) {
     File? _image;
@@ -387,28 +353,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
                     ),
                   ),
                   const SizedBox(height: 10),
-                  Text(
-                    newStatus == 'started'
-                        ? "Take a photo of the package to confirm pickup."
-                        : "Take a photo of the delivered item to complete the ride.",
-                    style: TextStyle(color: Colors.grey[600]),
+                  const Text(
+                    "PIN Verified. Take a photo of the package to continue.",
+                    style: TextStyle(
+                      color: Colors.green,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                   const SizedBox(height: 20),
                   Expanded(
                     child: GestureDetector(
                       onTap: () async {
-                        try {
-                          final XFile? photo = await _picker.pickImage(
-                            source: ImageSource.camera,
-                            imageQuality: 50,
-                          );
-                          if (photo != null) {
-                            setModalState(() {
-                              _image = File(photo.path);
-                            });
-                          }
-                        } catch (e) {
-                          debugPrint("Camera Error: $e");
+                        final XFile? photo = await _picker.pickImage(
+                          source: ImageSource.camera,
+                          imageQuality: 50,
+                        );
+                        if (photo != null) {
+                          setModalState(() => _image = File(photo.path));
                         }
                       },
                       child: Container(
@@ -416,10 +377,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         decoration: BoxDecoration(
                           color: Colors.grey[100],
                           borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: Colors.grey[300]!,
-                            style: BorderStyle.solid,
-                          ),
+                          border: Border.all(color: Colors.grey[300]!),
                         ),
                         child: _image == null
                             ? Column(
@@ -458,9 +416,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                                 newStatus,
                                 _image!,
                               );
-                              if (mounted) {
+                              if (mounted)
                                 setModalState(() => _isUploading = false);
-                              }
                             },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: Colors.black,
@@ -469,16 +426,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                       ),
                       child: _isUploading
-                          ? const SizedBox(
-                              height: 24,
-                              width: 24,
-                              child: CircularProgressIndicator(
-                                color: Colors.white,
-                                strokeWidth: 2,
-                              ),
-                            )
+                          ? const CircularProgressIndicator(color: Colors.white)
                           : const Text(
-                              "Submit & Confirm",
+                              "Submit Proof",
                               style: TextStyle(
                                 fontSize: 16,
                                 fontWeight: FontWeight.bold,
@@ -525,14 +475,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Center(
-                child: Container(
-                  width: 40,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: Colors.grey[300],
-                    borderRadius: BorderRadius.circular(2),
-                  ),
-                ),
+                child: Container(width: 40, height: 4, color: Colors.grey[300]),
               ),
               const SizedBox(height: 20),
               const Text(
@@ -594,7 +537,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // --- WIDGET HELPERS ---
-
   Widget _buildParcelSection(Map<String, dynamic> details) {
     final weight = details['weight_range']?.toString() ?? "Unknown";
     final type = details['type']?.toString() ?? "Parcel";
@@ -770,66 +712,36 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   // --- NAVIGATION ---
-
   Future<void> _startNavigation(
     String orderId,
     Map<String, dynamic> bookingData,
   ) async {
     String? customerId = bookingData['customer_id'];
-    if (customerId == null || customerId.isEmpty) return;
+    if (customerId == null) return;
+    final route = bookingData['route'] as Map<String, dynamic>? ?? {};
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (c) => const Center(child: CircularProgressIndicator()),
-    );
-
-    try {
-      DocumentSnapshot userDoc = await FirebaseFirestore.instance
-          .collection('users')
-          .doc(customerId)
-          .get();
-      Navigator.pop(context);
-
-      String name = "Customer";
-      String phone = "";
-      if (userDoc.exists) {
-        final userData = userDoc.data() as Map<String, dynamic>;
-        name = "${userData['firstName'] ?? ''} ${userData['lastName'] ?? ''}";
-        phone = userData['phone'] ?? "";
-      }
-
-      final route = bookingData['route'] as Map<String, dynamic>? ?? {};
-
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => DriverNavigationScreen(
-            dropoffLat: (route['dropoff_lat'] as num?)?.toDouble() ?? 0.0,
-            dropoffLng: (route['dropoff_lng'] as num?)?.toDouble() ?? 0.0,
-            pickupLat: (route['pickup_lat'] as num?)?.toDouble() ?? 0.0,
-            pickupLng: (route['pickup_lng'] as num?)?.toDouble() ?? 0.0,
-            parcelType: "Parcel",
-            customerName: name.trim().isEmpty ? "Customer" : name,
-            customerPhone: phone,
-            specialInstructions: 'See delivery details',
-            orderId: orderId,
-            driverId: currentUser!.uid,
-            customerId: customerId,
-            bookingStatus: bookingData['status'] ?? "",
-          ),
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => DriverNavigationScreen(
+          dropoffLat: (route['dropoff_lat'] as num?)?.toDouble() ?? 0.0,
+          dropoffLng: (route['dropoff_lng'] as num?)?.toDouble() ?? 0.0,
+          pickupLat: (route['pickup_lat'] as num?)?.toDouble() ?? 0.0,
+          pickupLng: (route['pickup_lng'] as num?)?.toDouble() ?? 0.0,
+          parcelType: "Parcel",
+          customerName: "Customer",
+          customerPhone: "",
+          specialInstructions: 'See delivery details',
+          orderId: orderId,
+          driverId: currentUser!.uid,
+          customerId: customerId,
+          bookingStatus: bookingData['status'] ?? "",
         ),
-      );
-    } catch (e) {
-      Navigator.pop(context);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text("Error: $e")));
-    }
+      ),
+    );
   }
 
   // --- MAIN BUILD ---
-
   @override
   Widget build(BuildContext context) {
     if (currentUser == null) {
@@ -876,18 +788,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // 1. Status Card
                       _buildStatusCard(isOnline, earnings),
                       const SizedBox(height: 30),
-
-                      // 2. Rides Lists
                       if (isOnline) ...[
                         _buildOngoingRidesList(),
                         const SizedBox(height: 20),
-                        // 3. Available Rides (Geo-filtered)
                         _buildAvailableRidesList(driverData),
                         const SizedBox(height: 30),
-                        // 4. Recent Rides History
                         _buildRecentRidesList(),
                       ] else
                         _buildOfflineView(isOnline),
@@ -901,6 +808,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
+
+  // --- SUB-WIDGETS (Cards & Lists) ---
 
   Widget _buildStatusCard(bool isOnline, double earnings) {
     return Container(
@@ -1024,7 +933,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
       stream: FirebaseFirestore.instance
           .collection('booking')
           .where('driver_id', isEqualTo: currentUser!.uid)
-          .where('status', whereIn: ['accepted', 'ongoing', 'started'])
+          .where(
+            'status',
+            whereIn: ['accepted', 'ongoing', 'started', 'in_progress'],
+          )
           .snapshots(),
       builder: (context, snapshot) {
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
@@ -1054,11 +966,126 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  Widget _buildOngoingRideCard(String docId, Map<String, dynamic> data) {
+    final route = data['route'] as Map<String, dynamic>? ?? {};
+    final vehicle = data['vehicle'] as Map<String, dynamic>? ?? {};
+    final status = data['status'] as String? ?? '';
+
+    // EXTRACT SECURITY OTPs
+    final security = data['security'] as Map<String, dynamic>? ?? {};
+    final String? pickupOtp = security['pickup_otp']?.toString();
+    final String? deliveryOtp = security['delivery_otp']?.toString();
+
+    // Determine Phase: 'accepted'/'ongoing' = pickup phase. 'in_progress'/'started' = delivery phase.
+    bool isHeadingToPickup = status == 'accepted' || status == 'ongoing';
+    bool isHeadingToDropoff = status == 'in_progress' || status == 'started';
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.blue[50],
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: Colors.blue.withOpacity(0.3)),
+      ),
+      child: Column(
+        children: [
+          _buildRouteInfo(route),
+          const Divider(height: 30),
+          _buildStatsRow(vehicle, route, data),
+          const SizedBox(height: 15),
+          TextButton.icon(
+            onPressed: () => _showDeliveryDetails(context, data),
+            icon: const Icon(Icons.info_outline, size: 18),
+            label: const Text("View Delivery Details"),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () => _startNavigation(docId, data),
+              icon: const Icon(Icons.navigation, color: Colors.white),
+              label: Text(
+                isHeadingToPickup
+                    ? "Navigate to Pickup"
+                    : "Navigate to Dropoff",
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.blueAccent,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+
+          // OTP Buttons
+          if (isHeadingToPickup) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  if (pickupOtp != null) {
+                    _showOtpVerificationDialog(
+                      context: context,
+                      requiredOtp: pickupOtp,
+                      title: "Pickup Verification",
+                      onSuccess: () => _showProofBottomSheet(docId, 'started'),
+                    );
+                  } else {
+                    _showProofBottomSheet(docId, 'started'); // Fallback
+                  }
+                },
+                icon: const Icon(Icons.lock_open, color: Colors.white),
+                label: const Text(
+                  "Verify Pickup (PIN)",
+                  style: TextStyle(color: Colors.white),
+                ),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: const Color(0xFF00C853),
+                ),
+              ),
+            ),
+          ],
+          if (isHeadingToDropoff) ...[
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton.icon(
+                onPressed: () {
+                  if (deliveryOtp != null) {
+                    _showOtpVerificationDialog(
+                      context: context,
+                      requiredOtp: deliveryOtp,
+                      title: "Delivery Verification",
+                      onSuccess: () =>
+                          _showProofBottomSheet(docId, 'completed'),
+                    );
+                  } else {
+                    _showProofBottomSheet(docId, 'completed'); // Fallback
+                  }
+                },
+                icon: const Icon(Icons.lock_open, color: Colors.white),
+                label: const Text(
+                  "Verify Delivery (PIN)",
+                  style: TextStyle(color: Colors.white),
+                ),
+                style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   Widget _buildAvailableRidesList(Map<String, dynamic> driverData) {
     final driverVehicle = driverData['vehicle'] as Map<String, dynamic>? ?? {};
     final String myVehicleType =
         driverVehicle['vehicle_type']?.toString().toLowerCase() ?? 'car';
-
     final driverLoc = driverData['location'] as Map<String, dynamic>? ?? {};
     final double driverLat = (driverLoc['lat'] as num?)?.toDouble() ?? 0.0;
     final double driverLng = (driverLoc['lng'] as num?)?.toDouble() ?? 0.0;
@@ -1081,39 +1108,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
             if (snapshot.connectionState == ConnectionState.waiting) {
               return const Center(child: CircularProgressIndicator());
             }
-
             if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
               return _buildEmptyState("No requests found");
             }
 
             final nearbyDocs = snapshot.data!.docs.where((doc) {
-              // --- ADDED: Filter out declined rides ---
-              if (_declinedRideIds.contains(doc.id)) {
-                return false;
-              }
-
+              if (_declinedRideIds.contains(doc.id)) return false;
               final data = doc.data() as Map<String, dynamic>;
               final route = data['route'] as Map<String, dynamic>? ?? {};
-
               final double pickupLat =
                   (route['pickup_lat'] as num?)?.toDouble() ?? 0.0;
               final double pickupLng =
                   (route['pickup_lng'] as num?)?.toDouble() ?? 0.0;
 
               if (driverLat == 0.0 || pickupLat == 0.0) return false;
-
               double distanceInMeters = Geolocator.distanceBetween(
                 driverLat,
                 driverLng,
                 pickupLat,
                 pickupLng,
               );
-
-              return distanceInMeters <= 5000;
+              return distanceInMeters <= 10000; // 5km Radius
             }).toList();
 
             if (nearbyDocs.isEmpty) {
-              return _buildEmptyState("No requests nearby (within 5km)");
+              return _buildEmptyState("No requests nearby (within 10km)");
             }
 
             return Column(
@@ -1132,20 +1151,121 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _buildEmptyState(String message) {
+  Widget _buildAvailableRideCard(String docId, Map<String, dynamic> data) {
+    final route = data['route'] as Map<String, dynamic>? ?? {};
+    final vehicle = data['vehicle'] as Map<String, dynamic>? ?? {};
+
     return Container(
-      padding: const EdgeInsets.all(30),
-      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(16),
         border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.grey.withOpacity(0.05),
+            spreadRadius: 2,
+            blurRadius: 10,
+          ),
+        ],
       ),
       child: Column(
         children: [
-          const Icon(Icons.location_off_outlined, size: 40, color: Colors.grey),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.green.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: const Text(
+                  "NEW REQUEST",
+                  style: TextStyle(
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green,
+                  ),
+                ),
+              ),
+              Text(
+                "₹${data['price']?.toString() ?? '0'}",
+                style: const TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 15),
+          _buildRouteInfo(route),
+          const Divider(height: 30),
+          _buildStatsRow(vehicle, route, data),
           const SizedBox(height: 10),
-          Text(message, style: const TextStyle(color: Colors.grey)),
+          Center(
+            child: TextButton.icon(
+              onPressed: () => _showDeliveryDetails(context, data),
+              icon: const Icon(
+                Icons.info_outline,
+                size: 20,
+                color: Colors.blueAccent,
+              ),
+              label: const Text(
+                "View Delivery Details",
+                style: TextStyle(
+                  color: Colors.blueAccent,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 15),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () => _acceptRide(docId),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF00C853),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: const Text(
+                    "Accept",
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 15),
+              Expanded(
+                child: OutlinedButton(
+                  onPressed: () => _declineRide(docId),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                  ),
+                  child: Text(
+                    "Decline",
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.grey[600],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -1164,7 +1284,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(child: CircularProgressIndicator());
         }
-
         if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
           return const SizedBox();
         }
@@ -1319,222 +1438,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  String _formatDate(DateTime date) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    final yesterday = DateTime(now.year, now.month, now.day - 1);
-    final dateToCheck = DateTime(date.year, date.month, date.day);
-
-    if (dateToCheck == today) {
-      return 'Today ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-    } else if (dateToCheck == yesterday) {
-      return 'Yesterday ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-    } else {
-      return '${date.day}/${date.month}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-    }
-  }
-
-  // --- CARDS ---
-
-  Widget _buildOngoingRideCard(String docId, Map<String, dynamic> data) {
-    final route = data['route'] as Map<String, dynamic>? ?? {};
-    final vehicle = data['vehicle'] as Map<String, dynamic>? ?? {};
-    final status = data['status'] as String? ?? '';
-
-    bool isHeadingToPickup = status == 'accepted' || status == 'ongoing';
-
+  Widget _buildEmptyState(String message) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.blue[50],
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.blue.withOpacity(0.3)),
-      ),
-      child: Column(
-        children: [
-          _buildRouteInfo(route),
-          const Divider(height: 30),
-          _buildStatsRow(vehicle, route, data),
-          const SizedBox(height: 15),
-          TextButton.icon(
-            onPressed: () => _showDeliveryDetails(context, data),
-            icon: const Icon(Icons.info_outline, size: 18),
-            label: const Text("View Delivery Details"),
-          ),
-          const SizedBox(height: 10),
-          SizedBox(
-            width: double.infinity,
-            child: ElevatedButton.icon(
-              onPressed: () => _startNavigation(docId, data),
-              icon: const Icon(Icons.navigation, color: Colors.white),
-              label: Text(
-                isHeadingToPickup
-                    ? "Navigate to Pickup"
-                    : "Navigate to Dropoff",
-                style: const TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blueAccent,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-            ),
-          ),
-          if (isHeadingToPickup) ...[
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () => _showProofBottomSheet(docId, 'started'),
-                icon: const Icon(Icons.camera_alt, color: Colors.white),
-                label: const Text(
-                  "Confirm Pickup (Photo)",
-                  style: TextStyle(color: Colors.white),
-                ),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: const Color(0xFF00C853),
-                ),
-              ),
-            ),
-          ],
-          if (status == 'started') ...[
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: () => _showProofBottomSheet(docId, 'completed'),
-                icon: const Icon(Icons.check_circle, color: Colors.white),
-                label: const Text(
-                  "Confirm Delivery (Photo)",
-                  style: TextStyle(color: Colors.white),
-                ),
-                style: ElevatedButton.styleFrom(backgroundColor: Colors.teal),
-              ),
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAvailableRideCard(String docId, Map<String, dynamic> data) {
-    final route = data['route'] as Map<String, dynamic>? ?? {};
-    final vehicle = data['vehicle'] as Map<String, dynamic>? ?? {};
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(30),
+      width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.grey.shade200),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.05),
-            spreadRadius: 2,
-            blurRadius: 10,
-          ),
-        ],
       ),
       child: Column(
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Text(
-                  "NEW REQUEST",
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.green,
-                  ),
-                ),
-              ),
-              Text(
-                "₹${data['price']?.toString() ?? '0'}",
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 15),
-          _buildRouteInfo(route),
-          const Divider(height: 30),
-          _buildStatsRow(vehicle, route, data),
+          const Icon(Icons.location_off_outlined, size: 40, color: Colors.grey),
           const SizedBox(height: 10),
-          Center(
-            child: TextButton.icon(
-              onPressed: () => _showDeliveryDetails(context, data),
-              icon: const Icon(
-                Icons.info_outline,
-                size: 20,
-                color: Colors.blueAccent,
-              ),
-              label: const Text(
-                "View Delivery Details",
-                style: TextStyle(
-                  color: Colors.blueAccent,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 15),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: () => _acceptRide(docId),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00C853),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: const Text(
-                    "Accept",
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 15),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => _declineRide(docId),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: Text(
-                    "Decline",
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
+          Text(message, style: const TextStyle(color: Colors.grey)),
         ],
       ),
     );
@@ -1623,5 +1540,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
         ),
       ],
     );
+  }
+
+  String _formatDate(DateTime date) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final yesterday = DateTime(now.year, now.month, now.day - 1);
+    final dateToCheck = DateTime(date.year, date.month, date.day);
+
+    if (dateToCheck == today) {
+      return 'Today ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    } else if (dateToCheck == yesterday) {
+      return 'Yesterday ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    } else {
+      return '${date.day}/${date.month}/${date.year} ${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
+    }
   }
 }

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:ryde/document_screen.dart';
+import 'package:ryde/driver_portal.dart';
 import 'package:ryde/history_screen.dart';
+// import 'package:ryde/main.dart'; // Import your main file if you need to navigate to MyApp
 
 class AccountScreen extends StatefulWidget {
   const AccountScreen({super.key});
@@ -12,9 +14,38 @@ class AccountScreen extends StatefulWidget {
 }
 
 class _AccountScreenState extends State<AccountScreen> {
-  int _selectedIndex = 2;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+
+  Future<void> _handleLogout() async {
+    try {
+      await _auth.signOut();
+      if (mounted) {
+        // Navigate back to the very first screen (usually Login or MyApp)
+        // and remove all previous screens from the stack so back button doesn't work.
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+            builder: (context) => const LoginScreen(),
+          ), // Replace with your actual Home Screen
+          (Route<dynamic> route) => false,
+        );
+        // OR: If you aren't using named routes, use this:
+        /*
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (context) => const MyApp()), // Replace MyApp with your LoginScreen
+          (route) => false,
+        );
+        */
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error logging out: $e")));
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -44,11 +75,6 @@ class _AccountScreenState extends State<AccountScreen> {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return _buildProfileCard(data: null, loading: true);
                 }
-                if (snapshot.hasError) {
-                  // You might want to log the error here
-                  return _buildProfileCard(data: null, loading: false);
-                }
-
                 final data = snapshot.data?.data();
                 return _buildProfileCard(data: data, loading: false);
               },
@@ -56,7 +82,7 @@ class _AccountScreenState extends State<AccountScreen> {
 
             const SizedBox(height: 20),
 
-            // Menu Options List
+            // --- Menu Options List ---
             _buildMenuOption(
               icon: Icons.notifications,
               title: "Notifications",
@@ -124,45 +150,31 @@ class _AccountScreenState extends State<AccountScreen> {
               title: "Reports",
               onTap: () {},
             ),
+
+            // --- NEW LOGOUT OPTION ---
+            const SizedBox(height: 20), // Extra spacing before logout
+            _buildMenuOption(
+              icon: Icons.logout,
+              title: "Logout",
+              onTap: _handleLogout,
+              textColor: Colors.redAccent, // Optional: make text red
+              iconColor: Colors.redAccent, // Optional: make icon red
+            ),
+            const SizedBox(height: 30),
           ],
         ),
       ),
-      /*  bottomNavigationBar: BottomNavigationBar(
-        currentIndex: _selectedIndex,
-        onTap: (index) {
-          setState(() {
-            _selectedIndex = index;
-          });
-        },
-        selectedItemColor: Colors.black,
-        unselectedItemColor: Colors.grey,
-        showUnselectedLabels: true,
-        type: BottomNavigationBarType.fixed,
-        items: const [
-          BottomNavigationBarItem(icon: Icon(Icons.home), label: "Home"),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.account_balance_wallet_outlined),
-            label: "Earnings",
-          ),
-          BottomNavigationBarItem(icon: Icon(Icons.person), label: "Accounts"),
-        ],
-      ),*/
     );
   }
 
   Widget _buildProfileCard({Map<String, dynamic>? data, bool loading = false}) {
-    // --- KEY FIX HERE ---
-    // Changed ['name'] to ['driverName'] to match your Firestore screenshot
     final displayName =
         data?['driverName'] as String? ??
         _auth.currentUser?.displayName ??
         'Driver';
-
-    // Note: 'trips' and 'rating' are not visible in your screenshot.
-    // Ensure these fields exist in Firestore or these defaults will show.
     final trips = data?['trips'] ?? 0;
     final rating = data?['rating']?.toString() ?? '0.0';
-    final photoUrl = data?['photoUrl'] as String?;
+    final photoUrl = data?['avatar'] as String?;
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -180,7 +192,6 @@ class _AccountScreenState extends State<AccountScreen> {
       ),
       child: Row(
         children: [
-          // Avatar
           CircleAvatar(
             radius: 30,
             backgroundColor: Colors.pink[100],
@@ -190,7 +201,6 @@ class _AccountScreenState extends State<AccountScreen> {
                 : null,
           ),
           const SizedBox(width: 15),
-          // User Info
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -268,8 +278,6 @@ class _AccountScreenState extends State<AccountScreen> {
             onPressed: () async {
               final newName = controller.text.trim();
               if (newName.isNotEmpty) {
-                // --- KEY FIX HERE ---
-                // Changed 'name' to 'driverName' to update the correct field in Firestore
                 await _firestore.collection('drivers').doc(user.uid).set({
                   'driverName': newName,
                 }, SetOptions(merge: true));
@@ -293,6 +301,8 @@ class _AccountScreenState extends State<AccountScreen> {
     required String title,
     required VoidCallback onTap,
     bool isCarIcon = false,
+    Color? textColor, // Added for logout styling
+    Color? iconColor, // Added for logout styling
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -332,13 +342,17 @@ class _AccountScreenState extends State<AccountScreen> {
                       ),
                     ],
                   )
-                : Icon(icon, color: const Color(0xFF01221D), size: 26)),
+                : Icon(
+                    icon,
+                    color: iconColor ?? const Color(0xFF01221D),
+                    size: 26,
+                  )),
         title: Text(
           title,
-          style: const TextStyle(
+          style: TextStyle(
             fontSize: 15,
             fontWeight: FontWeight.w500,
-            color: Colors.black,
+            color: textColor ?? Colors.black, // Use custom color if provided
           ),
         ),
         minLeadingWidth: 20,

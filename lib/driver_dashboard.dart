@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart'; // For defaultTargetPlatform
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -103,7 +104,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
       // ANDROID SPECIFIC SETTINGS
       locationSettings = AndroidSettings(
         accuracy: LocationAccuracy.high,
-        distanceFilter: 1, // Update if moved 10 meters (helps battery)
+        distanceFilter: 0, // Update if moved 10 meters (helps battery)
         forceLocationManager: true,
         intervalDuration: const Duration(seconds: 10), // Force update every 10s
         // Foreground Notification Config (REQUIRED for background access)
@@ -138,6 +139,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
         Geolocator.getPositionStream(locationSettings: locationSettings).listen(
           (Position position) {
             _updateFirestoreLocation(position);
+            _updateParcelLocation(position);
           },
         );
   }
@@ -163,6 +165,34 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen>
         );
       } catch (e) {
         debugPrint("Error pushing location to Firestore: $e");
+      }
+    }
+  }
+
+  Future<void> _updateParcelLocation(Position position) async {
+    // 1. Get the current user
+    final user = FirebaseAuth.instance.currentUser;
+
+    if (user != null) {
+      try {
+        // 2. Get the Secondary App Instance
+        final secondaryApp = Firebase.app('parcelApp');
+
+        // 3. Get the Firestore instance specifically for that app
+        final parcelFirestore = FirebaseFirestore.instanceFor(
+          app: secondaryApp,
+        );
+
+        // 4. Perform the update
+        await parcelFirestore.collection('agents').doc(user.uid).update({
+          // CHANGED: Using GeoPoint for 'currentLocation'
+          'currentLocation': GeoPoint(position.latitude, position.longitude),
+          'last_updated': FieldValue.serverTimestamp(),
+        }); // CRITICAL: merge: true prevents deleting other data
+
+        // debugPrint("📦 Parcel System Location Updated");
+      } catch (e) {
+        debugPrint("Error pushing to Parcel Firestore: $e");
       }
     }
   }

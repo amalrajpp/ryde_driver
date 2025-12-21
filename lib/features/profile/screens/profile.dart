@@ -6,6 +6,8 @@ import 'package:ryde/features/auth/screens/driver_portal.dart';
 import 'package:ryde/features/history/screens/history_screen.dart';
 import 'package:ryde/features/vehicle/screens/vehicle_information_screen.dart';
 import 'package:ryde/features/wallet/screens/wallet_screen.dart';
+import 'package:ryde/features/profile/screens/referral_screen.dart';
+import 'package:ryde/features/profile/screens/sos_screen.dart';
 // import 'package:ryde/main.dart'; // Import your main file if you need to navigate to MyApp
 
 class AccountScreen extends StatefulWidget {
@@ -140,7 +142,14 @@ class _AccountScreenState extends State<AccountScreen> {
             _buildMenuOption(
               icon: Icons.share,
               title: "Refer & Earn",
-              onTap: () {},
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const ReferralScreen(),
+                  ),
+                );
+              },
             ),
             _buildMenuOption(
               icon: Icons.language,
@@ -157,7 +166,12 @@ class _AccountScreenState extends State<AccountScreen> {
                 ),
               ),
               title: "SOS",
-              onTap: () {},
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SOSScreen()),
+                );
+              },
             ),
             _buildMenuOption(
               icon: Icons.report_problem,

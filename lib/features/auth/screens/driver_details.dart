@@ -5,8 +5,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:http/http.dart' as http;
-import 'package:ryde/driver_dashboard.dart';
-import 'package:ryde/secondary.dart';
+import 'package:ryde/features/dashboard/screens/driver_dashboard.dart';
+import 'package:ryde/features/dashboard/screens/secondary.dart';
 
 class DriverRegistrationScreen extends StatefulWidget {
   const DriverRegistrationScreen({Key? key}) : super(key: key);

@@ -6,11 +6,12 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:get/get.dart';
 
 // Your existing imports
-import 'package:ryde/dashboard.dart';
-import 'package:ryde/earnings.dart';
-import 'package:ryde/profile.dart';
+import 'package:ryde/features/dashboard/screens/dashboard.dart';
+import 'package:ryde/features/earnings/screens/earnings.dart';
+import 'package:ryde/features/profile/screens/profile.dart';
 
 // Define color constants
 const Color kPrimaryYellow = Color(0xFFFFD700);
@@ -23,7 +24,7 @@ class DriverDashboardApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return GetMaterialApp(
       title: 'Driver Dashboard UI',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(

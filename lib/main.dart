@@ -3,11 +3,11 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 
 // Your project imports
-import 'package:ryde/driver_portal.dart';
-import 'package:ryde/firebase_options.dart';
-import 'package:ryde/driver_dashboard.dart';
-import 'package:ryde/secondary.dart';
-import 'package:ryde/services/location_permission.dart';
+import 'package:ryde/features/auth/screens/driver_portal.dart';
+import 'package:ryde/core/constants/firebase_options.dart';
+import 'package:ryde/features/dashboard/screens/driver_dashboard.dart';
+import 'package:ryde/core/services/location_permission.dart';
+import 'package:ryde/payment_module/config/payment_config.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -34,15 +34,24 @@ void main() async {
     ),
   );
 
-  // 3. Request Permissions
+  // -----------------------------------------------------------
+  // 3. Initialize RazorPay Payment Gateway
+  // -----------------------------------------------------------
+  if (PaymentConfig.isRazorPayConfigured) {
+    print('✅ RazorPay configured successfully');
+  } else {
+    print('⚠️ RazorPay not configured. Add keys to PaymentConfig.');
+  }
+
+  // 4. Request Permissions
   // Ideally, await this if it involves user interaction, otherwise fire-and-forget is okay.
   requestLocationPermission();
 
-  // 4. Check Authentication State (For the PRIMARY 'Ryde' App)
+  // 5. Check Authentication State (For the PRIMARY 'Ryde' App)
   // Note: This checks the user for your MAIN app, not the parcel app.
   User? currentUser = FirebaseAuth.instance.currentUser;
 
-  // 5. Run appropriate App based on Auth state
+  // 6. Run appropriate App based on Auth state
   if (currentUser != null) {
     // User is logged into Ryde -> Go directly to Dashboard
     runApp(const DriverDashboardApp());

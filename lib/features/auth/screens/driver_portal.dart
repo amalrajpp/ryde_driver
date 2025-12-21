@@ -1,17 +1,16 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:ryde/dashboard.dart';
-import 'package:ryde/driver_dashboard.dart';
-import 'package:ryde/driver_details.dart';
+import 'package:get/get.dart';
+import 'package:ryde/features/dashboard/screens/driver_dashboard.dart';
+import 'package:ryde/features/auth/screens/driver_details.dart';
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return GetMaterialApp(
       title: 'IITianCraft Driver',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(

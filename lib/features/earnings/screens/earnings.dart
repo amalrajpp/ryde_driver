@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:intl/intl.dart';
+import 'package:ryde/payment_module/helpers/payment_integration.dart';
 
 class EarningsScreen extends StatefulWidget {
   const EarningsScreen({super.key});
@@ -11,7 +12,6 @@ class EarningsScreen extends StatefulWidget {
 }
 
 class _EarningsScreenState extends State<EarningsScreen> {
-  int _selectedIndex = 1;
   final FirebaseAuth _auth = FirebaseAuth.instance;
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
@@ -249,6 +249,41 @@ class _EarningsScreenState extends State<EarningsScreen> {
                                 ),
                               ),
                             ),
+
+                            // ===== PAYMENT WITHDRAWAL BUTTON =====
+                            const SizedBox(height: 20),
+                            if (weeklyEarnings > 0)
+                              Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16.0,
+                                ),
+                                child: PaymentIntegration.buildEarningsPaymentButton(
+                                  context: context,
+                                  earningsAmount: weeklyEarnings,
+                                  onPressed: () async {
+                                    final success =
+                                        await PaymentIntegration.showPaymentScreenWithMock(
+                                          context: context,
+                                          amount: weeklyEarnings,
+                                          title: 'Withdraw Earnings',
+                                          primaryColor: const Color(0xFF01221D),
+                                        );
+
+                                    if (success == true && mounted) {
+                                      ScaffoldMessenger.of(
+                                        context,
+                                      ).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'Withdrawal initiated successfully!',
+                                          ),
+                                          backgroundColor: Colors.green,
+                                        ),
+                                      );
+                                    }
+                                  },
+                                ),
+                              ),
 
                             // Visual Spacers for Graph Area
                             const SizedBox(height: 100),

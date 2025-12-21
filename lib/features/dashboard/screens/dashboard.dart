@@ -7,7 +7,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:http/http.dart' as http; // Use standard HTTP package
 import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart'; // REQUIRED for distance calculation
-import 'package:ryde/driver_navigation.dart'; // Ensure this file exists
+import 'package:ryde/features/dashboard/widgets/driver_navigation.dart'; // Ensure this file exists
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -155,6 +155,89 @@ class _DashboardScreenState extends State<DashboardScreen> {
     setState(() {
       _declinedRideIds.add(rideId);
     });
+  }
+
+  Future<void> _cancelRide(String rideId) async {
+    if (currentUser == null) return;
+
+    // Show confirmation dialog
+    bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text("Cancel Ride"),
+        content: const Text(
+          "Are you sure you want to cancel this ride? The customer will be notified.",
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text("No, Keep Ride"),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text("Yes, Cancel"),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      // Get booking data to find customer ID
+      DocumentSnapshot bookingDoc = await FirebaseFirestore.instance
+          .collection('booking')
+          .doc(rideId)
+          .get();
+
+      if (!bookingDoc.exists) return;
+
+      String? customerId =
+          (bookingDoc.data() as Map<String, dynamic>)['customer_id'];
+
+      // Update booking status to cancelled
+      await FirebaseFirestore.instance.collection('booking').doc(rideId).update(
+        {
+          'status': 'cancelled',
+          'cancelled_by': 'driver',
+          'cancelled_at': FieldValue.serverTimestamp(),
+          'driver_id': FieldValue.delete(), // Remove driver assignment
+          'driver_details': FieldValue.delete(),
+        },
+      );
+
+      // Update driver's working status back to available
+      await FirebaseFirestore.instance
+          .collection('drivers')
+          .doc(currentUser!.uid)
+          .update({'working': 'unassigned'});
+
+      // Notify customer
+      if (customerId != null) {
+        _sendNotification(
+          customerId,
+          "Ride Cancelled",
+          "Your driver has cancelled the ride. Please request another ride.",
+        );
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Ride cancelled successfully"),
+            backgroundColor: Colors.orange,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint("Error cancelling ride: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text("Error cancelling ride: $e")));
+      }
+    }
   }
 
   // --- OTP DIALOG LOGIC ---
@@ -1046,6 +1129,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xFF00C853),
+                ),
+              ),
+            ),
+            const SizedBox(height: 10),
+            // Cancel Ride Button - Only show before pickup
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                onPressed: () => _cancelRide(docId),
+                icon: const Icon(Icons.cancel_outlined, color: Colors.red),
+                label: const Text(
+                  "Cancel Ride",
+                  style: TextStyle(color: Colors.red),
+                ),
+                style: OutlinedButton.styleFrom(
+                  side: const BorderSide(color: Colors.red),
+                  padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
               ),
             ),

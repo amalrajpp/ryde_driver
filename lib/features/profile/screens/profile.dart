@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:ryde/document_screen.dart';
-import 'package:ryde/driver_portal.dart';
-import 'package:ryde/history_screen.dart';
+import 'package:ryde/features/documents/screens/document_screen.dart';
+import 'package:ryde/features/auth/screens/driver_portal.dart';
+import 'package:ryde/features/history/screens/history_screen.dart';
+import 'package:ryde/features/vehicle/screens/vehicle_information_screen.dart';
+import 'package:ryde/features/wallet/screens/wallet_screen.dart';
 // import 'package:ryde/main.dart'; // Import your main file if you need to navigate to MyApp
 
 class AccountScreen extends StatefulWidget {
@@ -104,7 +106,14 @@ class _AccountScreenState extends State<AccountScreen> {
               icon: Icons.directions_car_filled,
               title: "Vehicle Informations",
               isCarIcon: true,
-              onTap: () {},
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => const VehicleInformationScreen(),
+                  ),
+                );
+              },
             ),
             _buildMenuOption(
               icon: Icons.folder,
@@ -119,9 +128,14 @@ class _AccountScreenState extends State<AccountScreen> {
               },
             ),
             _buildMenuOption(
-              icon: Icons.credit_card,
-              title: "Payment",
-              onTap: () {},
+              icon: Icons.account_balance_wallet,
+              title: "My Wallet",
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const WalletScreen()),
+                );
+              },
             ),
             _buildMenuOption(
               icon: Icons.share,

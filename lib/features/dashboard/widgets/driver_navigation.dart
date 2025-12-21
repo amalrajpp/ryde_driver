@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'package:geolocator/geolocator.dart'; // Import Geolocator
-import 'package:ryde/chat_screen.dart';
+import 'package:ryde/features/dashboard/screens/chat_screen.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 class DriverNavigationScreen extends StatefulWidget {
@@ -68,14 +68,19 @@ class _DriverNavigationScreenState extends State<DriverNavigationScreen> {
 
   // Helper to determine where we are going based on status
   void _determineTargetLocation() {
-    if (widget.bookingStatus == 'ongoing') {
-      // Driver is going to Pickup
-      targetLat = widget.pickupLat;
-      targetLng = widget.pickupLng;
-    } else {
-      // Status is 'started' (or anything else), Driver is going to Dropoff
+    // Default to navigating to the Pickup location unless the booking status
+    // explicitly indicates that the trip has started and the driver should
+    // be navigating to the Dropoff instead.
+    // Treat common "trip started" statuses as dropoff-stage.
+    final status = widget.bookingStatus.toLowerCase();
+    if (status == 'started' || status == 'in_progress' || status == 'on_trip') {
+      // Driver is already on the trip -> navigate to Dropoff
       targetLat = widget.dropoffLat;
       targetLng = widget.dropoffLng;
+    } else {
+      // Otherwise (accepted, ongoing, etc.) -> navigate to Pickup
+      targetLat = widget.pickupLat;
+      targetLng = widget.pickupLng;
     }
   }
 

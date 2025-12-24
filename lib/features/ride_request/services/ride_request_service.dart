@@ -5,8 +5,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import '../screens/ride_request_popup.dart';
+import '../../../core/services/app_launcher_service.dart';
 
-class RideRequestService {
+class RideRequestService with WidgetsBindingObserver {
   static final RideRequestService _instance = RideRequestService._internal();
   factory RideRequestService() => _instance;
   RideRequestService._internal();
@@ -15,13 +16,27 @@ class RideRequestService {
   final Set<String> _processedRideIds = {};
   final Set<String> _declinedRideIds = {};
   BuildContext? _activeContext;
+  AppLifecycleState _currentLifecycleState = AppLifecycleState.resumed;
+  DateTime? _serviceStartTime;
 
   // Initialize the service
   void initialize(BuildContext context) {
     debugPrint('🚀 RideRequestService: Initializing...');
     _activeContext = context;
+    _serviceStartTime = DateTime.now();
+    debugPrint('⏰ Service start time: $_serviceStartTime');
+    WidgetsBinding.instance.addObserver(this);
+    _currentLifecycleState =
+        WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
+    debugPrint('📱 Initial lifecycle state: $_currentLifecycleState');
     _setupFCMListeners();
     _startListeningForRideRequests();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _currentLifecycleState = state;
+    debugPrint('📱 App lifecycle changed to: $state');
   }
 
   // Setup Firebase Cloud Messaging listeners
@@ -98,11 +113,18 @@ class RideRequestService {
 
     debugPrint('✅ RideRequestService: Starting to listen for pending rides...');
 
+    // Calculate cutoff time - only show requests from the last 10 seconds
+    final cutoffTime = DateTime.now().subtract(const Duration(seconds: 10));
+    debugPrint('⏰ Only showing requests after: $cutoffTime');
+
     // Listen to pending ride requests matching driver's vehicle type
+    // Only get requests created in the last 10 seconds
     _rideRequestSubscription = FirebaseFirestore.instance
         .collection('booking')
         .where('status', isEqualTo: 'pending')
         .where('vehicle_type', isEqualTo: myVehicleType)
+        .where('created_at', isGreaterThan: cutoffTime)
+        .orderBy('created_at', descending: true)
         .snapshots()
         .listen(
           (snapshot) {
@@ -115,6 +137,22 @@ class RideRequestService {
                 final rideId = change.doc.id;
                 final rideData = change.doc.data() as Map<String, dynamic>;
                 final status = rideData['status'] ?? '';
+
+                // Check if this request was created before the service started
+                // If so, it's an old request and should be ignored
+                final createdAt = rideData['created_at'] as Timestamp?;
+                if (createdAt != null && _serviceStartTime != null) {
+                  final requestTime = createdAt.toDate();
+                  if (requestTime.isBefore(_serviceStartTime!)) {
+                    debugPrint(
+                      '⏭️ RideRequestService: Ride $rideId created before service started, skipping',
+                    );
+                    _processedRideIds.add(
+                      rideId,
+                    ); // Mark as processed to avoid showing later
+                    continue;
+                  }
+                }
 
                 debugPrint(
                   '🆕 RideRequestService: New ride detected: $rideId (status: $status)',
@@ -301,13 +339,50 @@ class RideRequestService {
   }
 
   // Show the ride request popup (Uber-style bottom sheet)
-  void _showRideRequestPopup(String rideId, Map<String, dynamic> rideData) {
-    if (_activeContext == null || !_activeContext!.mounted) return;
+  void _showRideRequestPopup(
+    String rideId,
+    Map<String, dynamic> rideData,
+  ) async {
+    if (_activeContext == null || !_activeContext!.mounted) {
+      debugPrint('❌ Context not available, cannot show popup');
+      return;
+    }
 
     // Mark as processed to avoid duplicate popups
     _processedRideIds.add(rideId);
 
-    // Show as a full-screen overlay (Uber-style)
+    // Check app lifecycle state to determine if app is in background
+    debugPrint('📱 Current app lifecycle state: $_currentLifecycleState');
+    debugPrint(
+      '📱 WidgetsBinding lifecycle state: ${WidgetsBinding.instance.lifecycleState}',
+    );
+
+    // Show overlay if app is in background
+    final isInBackground =
+        _currentLifecycleState == AppLifecycleState.paused ||
+        _currentLifecycleState == AppLifecycleState.inactive ||
+        _currentLifecycleState == AppLifecycleState.detached;
+
+    debugPrint('📱 Is app in background? $isInBackground');
+
+    if (isInBackground) {
+      debugPrint('🔔 App in background - automatically bringing to foreground');
+
+      // Automatically bring app to foreground
+      try {
+        await AppLauncherService.bringToForeground();
+        debugPrint('✅ App brought to foreground successfully');
+
+        // Wait a moment for the app to come to foreground before showing popup
+        await Future.delayed(const Duration(milliseconds: 500));
+      } catch (e) {
+        debugPrint('❌ Error bringing app to foreground: $e');
+      }
+    } else {
+      debugPrint('📱 App in foreground - will show in-app popup only');
+    }
+
+    // Always show in-app popup (will appear when app comes to foreground)
     Navigator.of(_activeContext!).push(
       PageRouteBuilder(
         opaque: false,
@@ -334,6 +409,8 @@ class RideRequestService {
     if (user == null) return;
 
     try {
+      debugPrint('🔔 Accept button pressed for ride: $rideId');
+
       // First, verify the ride is still pending (race condition check)
       final rideDoc = await FirebaseFirestore.instance
           .collection('booking')
@@ -404,6 +481,11 @@ class RideRequestService {
       }
 
       debugPrint('✅ Ride accepted successfully');
+
+      // Close the popup
+      if (_activeContext != null && _activeContext!.mounted) {
+        Navigator.of(_activeContext!).pop();
+      }
     } catch (e) {
       debugPrint('❌ Error accepting ride: $e');
     }
@@ -428,6 +510,11 @@ class RideRequestService {
       debugPrint('✅ Added driver to declined_by list in Firestore');
     } catch (e) {
       debugPrint('❌ Error updating declined_by: $e');
+    }
+
+    // Close the popup
+    if (_activeContext != null && _activeContext!.mounted) {
+      Navigator.of(_activeContext!).pop();
     }
   }
 
@@ -461,6 +548,7 @@ class RideRequestService {
   // Stop listening (but keep declined/processed ride history)
   void dispose() {
     _rideRequestSubscription?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     // Don't clear _processedRideIds and _declinedRideIds
     // They should persist across online/offline toggles
   }
@@ -475,6 +563,7 @@ class RideRequestService {
   // Complete cleanup (only call when driver logs out or app closes)
   void completeDispose() {
     _rideRequestSubscription?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _processedRideIds.clear();
     _declinedRideIds.clear();
     _activeContext = null;

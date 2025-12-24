@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart'; // REQUIRED for distance calculation
 import 'package:ryde/features/dashboard/widgets/driver_navigation.dart'; // Ensure this file exists
 import 'package:ryde/features/ride_request/services/ride_request_service.dart';
+import 'package:ryde/features/ride_request/services/overlay_service.dart';
 import 'package:ryde/features/ride_request/screens/diagnostic_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -86,6 +87,35 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     try {
       if (newStatus == 'online') {
+        // Request overlay permission first (Display over other apps)
+        final overlayService = OverlayService();
+        final hasPermission = await overlayService.hasOverlayPermission();
+
+        if (!hasPermission) {
+          debugPrint('📱 Requesting overlay permission...');
+          final granted = await overlayService.requestOverlayPermission();
+
+          if (!granted) {
+            debugPrint('❌ Overlay permission denied');
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text(
+                    'Display over other apps permission is required to receive ride requests in background',
+                  ),
+                  duration: Duration(seconds: 5),
+                  backgroundColor: Colors.orange,
+                ),
+              );
+            }
+            // Continue anyway - overlay just won't work
+          } else {
+            debugPrint('✅ Overlay permission granted');
+          }
+        } else {
+          debugPrint('✅ Overlay permission already granted');
+        }
+
         debugPrint('📍 Getting current location...');
         Position position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high,
@@ -885,6 +915,47 @@ class _DashboardScreenState extends State<DashboardScreen> {
         foregroundColor: Colors.black,
         automaticallyImplyLeading: false,
         actions: [
+          // Test Overlay Button
+          IconButton(
+            icon: const Icon(Icons.notifications_active, color: Colors.blue),
+            tooltip: 'Test Overlay',
+            onPressed: () async {
+              debugPrint('🧪 Manual overlay test triggered');
+              final overlayService = OverlayService();
+
+              final hasPermission = await overlayService.hasOverlayPermission();
+              debugPrint('🔍 Test: Overlay permission = $hasPermission');
+
+              if (!hasPermission) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Please grant overlay permission first'),
+                      backgroundColor: Colors.red,
+                    ),
+                  );
+                }
+                return;
+              }
+
+              await overlayService.showOverlayBubble(
+                rideId: 'test-${DateTime.now().millisecondsSinceEpoch}',
+                pickupAddress: 'Test Location - 123 Main Street',
+                customerName: 'Test Customer',
+                fare: 150.0,
+              );
+
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Test overlay shown! Press home to see it.'),
+                    backgroundColor: Colors.green,
+                    duration: Duration(seconds: 3),
+                  ),
+                );
+              }
+            },
+          ),
           // Diagnostic Button
           IconButton(
             icon: const Icon(Icons.bug_report, color: Colors.orange),

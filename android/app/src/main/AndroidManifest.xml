@@ -13,6 +13,13 @@
 <uses-permission android:name="android.permission.READ_CONTACTS" />
 <uses-permission android:name="android.permission.CALL_PHONE" />
 
+<!-- Required for Overlay (Display over other apps) -->
+<uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+<!-- Required to bring app to foreground when in background -->
+<uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
+<uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:label="ryde agent"
         android:name="${applicationName}"
@@ -25,7 +32,9 @@
             android:theme="@style/LaunchTheme"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
             android:hardwareAccelerated="true"
-            android:windowSoftInputMode="adjustResize">
+            android:windowSoftInputMode="adjustResize"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true">
             <!-- Specifies an Android theme to apply to this Activity as soon as
                  the Android process has started. This theme is visible to the user
                  while the Flutter UI initializes. After that, this theme continues
@@ -38,14 +47,27 @@
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
+            <!-- Intent filter to handle FCM notifications -->
+            <intent-filter>
+                <action android:name="FLUTTER_NOTIFICATION_CLICK"/>
+                <category android:name="android.intent.category.DEFAULT"/>
+            </intent-filter>
         </activity>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data
             android:name="flutterEmbedding"
             android:value="2" />
-            <meta-data android:name="com.google.android.geo.API_KEY"
+        <meta-data android:name="com.google.android.geo.API_KEY"
            android:value="AIzaSyDfOLxaH9E5-hZ0RlPdclHVWv51Nx7hamk"/>
+        <!-- Default notification channel for FCM -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_channel_id"
+            android:value="ride_requests" />
+        <!-- Notification icon -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@mipmap/ic_launcher" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

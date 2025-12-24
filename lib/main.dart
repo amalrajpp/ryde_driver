@@ -1,6 +1,9 @@
+import 'dart:async';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 
 // Your project imports
 import 'package:ryde/features/auth/screens/driver_portal.dart';
@@ -8,6 +11,31 @@ import 'package:ryde/core/constants/firebase_options.dart';
 import 'package:ryde/features/dashboard/screens/driver_dashboard.dart';
 import 'package:ryde/core/services/location_permission.dart';
 import 'package:ryde/payment_module/config/payment_config.dart';
+import 'package:ryde/features/ride_request/widgets/overlay_widget.dart';
+
+// FCM Background Message Handler
+@pragma('vm:entry-point')
+Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  debugPrint('🔔 Background message received: ${message.notification?.title}');
+
+  // Log that a ride request came in - the Firestore listener will handle showing the popup
+  if (message.notification?.title?.contains('Ride Request') == true) {
+    debugPrint('🚗 Ride request notification received in background');
+    debugPrint(
+      '📱 App will show popup when Firestore listener detects new booking',
+    );
+  }
+}
+
+// Overlay entry point
+@pragma("vm:entry-point")
+void overlayMain() {
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(
+    const MaterialApp(debugShowCheckedModeBanner: false, home: OverlayApp()),
+  );
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -16,6 +44,12 @@ void main() async {
   // 1. Initialize PRIMARY Firebase (Your Ryde App)
   // -----------------------------------------------------------
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
+  // -----------------------------------------------------------
+  // 1.1 Register FCM Background Message Handler
+  // -----------------------------------------------------------
+  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
+  debugPrint('✅ FCM background handler registered');
 
   // -----------------------------------------------------------
   // 2. Initialize SECONDARY Firebase (Parcel Delivery System)

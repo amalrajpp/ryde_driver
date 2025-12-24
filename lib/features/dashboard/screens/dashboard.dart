@@ -8,6 +8,8 @@ import 'package:http/http.dart' as http; // Use standard HTTP package
 import 'package:image_picker/image_picker.dart';
 import 'package:geolocator/geolocator.dart'; // REQUIRED for distance calculation
 import 'package:ryde/features/dashboard/widgets/driver_navigation.dart'; // Ensure this file exists
+import 'package:ryde/features/ride_request/services/ride_request_service.dart';
+import 'package:ryde/features/ride_request/screens/diagnostic_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -19,12 +21,28 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   final User? currentUser = FirebaseAuth.instance.currentUser;
   final List<String> _declinedRideIds = [];
+  final RideRequestService _rideRequestService = RideRequestService();
 
   // ⚠️ CONFIGURATION: REPLACE THESE WITH YOUR ACTUAL KEYS
   final String _cloudName = "dm9b7873j";
   final String _uploadPreset = "rydeapp";
   final String _notificationServerUrl =
       "https://ryde-notifications.onrender.com/send-single";
+
+  @override
+  void initState() {
+    super.initState();
+    // Initialize ride request service
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _rideRequestService.initialize(context);
+    });
+  }
+
+  @override
+  void dispose() {
+    _rideRequestService.dispose();
+    super.dispose();
+  }
 
   // --- NOTIFICATION HELPER ---
   Future<void> _sendNotification(
@@ -56,13 +74,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // --- ACTIONS ---
   Future<void> _toggleStatus(bool currentStatus) async {
-    if (currentUser == null) return;
+    debugPrint('🔄 Toggle status called: currentStatus=$currentStatus');
+
+    if (currentUser == null) {
+      debugPrint('❌ CurrentUser is null, cannot toggle status');
+      return;
+    }
+
     String newStatus = currentStatus ? 'offline' : 'online';
+    debugPrint('🔄 Attempting to change status to: $newStatus');
+
     try {
       if (newStatus == 'online') {
+        debugPrint('📍 Getting current location...');
         Position position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high,
         );
+        debugPrint(
+          '📍 Location obtained: ${position.latitude}, ${position.longitude}',
+        );
+
         await FirebaseFirestore.instance
             .collection('drivers')
             .doc(currentUser!.uid)
@@ -75,6 +106,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               },
               'last_updated': FieldValue.serverTimestamp(),
             });
+
+        debugPrint('✅ Status updated to online in Firestore');
+
+        // 🔥 Start listening for ride requests when going online
+        _rideRequestService.restart(context);
       } else {
         await FirebaseFirestore.instance
             .collection('drivers')
@@ -83,8 +119,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
               'status': newStatus,
               'last_updated': FieldValue.serverTimestamp(),
             });
+
+        debugPrint('✅ Status updated to offline in Firestore');
+
+        // Stop listening for ride requests when going offline
+        _rideRequestService.dispose();
       }
     } catch (e) {
+      debugPrint('❌ Error toggling status: $e');
       if (mounted) {
         ScaffoldMessenger.of(
           context,
@@ -842,6 +884,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
         elevation: 0,
         foregroundColor: Colors.black,
         automaticallyImplyLeading: false,
+        actions: [
+          // Diagnostic Button
+          IconButton(
+            icon: const Icon(Icons.bug_report, color: Colors.orange),
+            tooltip: 'Run Diagnostic',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const RideRequestDiagnostic(),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: StreamBuilder<DocumentSnapshot>(
         stream: FirebaseFirestore.instance
@@ -876,8 +933,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
                       if (isOnline) ...[
                         _buildOngoingRidesList(),
                         const SizedBox(height: 20),
-                        _buildAvailableRidesList(driverData),
-                        const SizedBox(height: 30),
+                        // 🎉 New Uber-style popup system handles requests automatically
+                        // Old _buildAvailableRidesList removed - requests now show as popups
+                        const SizedBox(height: 10),
                         _buildRecentRidesList(),
                       ] else
                         _buildOfflineView(isOnline),
@@ -1182,194 +1240,31 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
+  // ============================================================================
+  // 🗑️ OLD AVAILABLE RIDES LIST - REPLACED BY UBER-STYLE POPUP SYSTEM
+  // ============================================================================
+  // The following methods are kept for reference but are no longer used.
+  // Ride requests now appear as time-limited popups (see RideRequestService)
+  // ============================================================================
+
+  /*
   Widget _buildAvailableRidesList(Map<String, dynamic> driverData) {
-    final driverVehicle = driverData['vehicle'] as Map<String, dynamic>? ?? {};
-    final String myVehicleType =
-        driverVehicle['vehicle_type']?.toString().toLowerCase() ?? 'car';
-    final driverLoc = driverData['location'] as Map<String, dynamic>? ?? {};
-    final double driverLat = (driverLoc['lat'] as num?)?.toDouble() ?? 0.0;
-    final double driverLng = (driverLoc['lng'] as num?)?.toDouble() ?? 0.0;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        const Text(
-          "Nearby Requests",
-          style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-        const SizedBox(height: 15),
-        StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('booking')
-              .where('status', isEqualTo: 'pending')
-              .where('vehicle_type', isEqualTo: myVehicleType)
-              .snapshots(),
-          builder: (context, snapshot) {
-            if (snapshot.connectionState == ConnectionState.waiting) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-              return _buildEmptyState("No requests found");
-            }
-
-            final nearbyDocs = snapshot.data!.docs.where((doc) {
-              if (_declinedRideIds.contains(doc.id)) return false;
-              final data = doc.data() as Map<String, dynamic>;
-              final route = data['route'] as Map<String, dynamic>? ?? {};
-              final double pickupLat =
-                  (route['pickup_lat'] as num?)?.toDouble() ?? 0.0;
-              final double pickupLng =
-                  (route['pickup_lng'] as num?)?.toDouble() ?? 0.0;
-
-              if (driverLat == 0.0 || pickupLat == 0.0) return false;
-              double distanceInMeters = Geolocator.distanceBetween(
-                driverLat,
-                driverLng,
-                pickupLat,
-                pickupLng,
-              );
-              return distanceInMeters <= 10000; // 5km Radius
-            }).toList();
-
-            if (nearbyDocs.isEmpty) {
-              return _buildEmptyState("No requests nearby (within 10km)");
-            }
-
-            return Column(
-              children: nearbyDocs
-                  .map(
-                    (doc) => _buildAvailableRideCard(
-                      doc.id,
-                      doc.data() as Map<String, dynamic>,
-                    ),
-                  )
-                  .toList(),
-            );
-          },
-        ),
-      ],
-    );
+    // This old method showed rides in a list format
+    // NOW REPLACED by automatic popup system in RideRequestService
+    // The popup appears automatically when a nearby ride is available
+    return Container(); // Placeholder - not used
   }
 
   Widget _buildAvailableRideCard(String docId, Map<String, dynamic> data) {
-    final route = data['route'] as Map<String, dynamic>? ?? {};
-    final vehicle = data['vehicle'] as Map<String, dynamic>? ?? {};
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 16),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.grey.shade200),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.05),
-            spreadRadius: 2,
-            blurRadius: 10,
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: Colors.green.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: const Text(
-                  "NEW REQUEST",
-                  style: TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.green,
-                  ),
-                ),
-              ),
-              Text(
-                "₹${data['price']?.toString() ?? '0'}",
-                style: const TextStyle(
-                  fontSize: 18,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 15),
-          _buildRouteInfo(route),
-          const Divider(height: 30),
-          _buildStatsRow(vehicle, route, data),
-          const SizedBox(height: 10),
-          Center(
-            child: TextButton.icon(
-              onPressed: () => _showDeliveryDetails(context, data),
-              icon: const Icon(
-                Icons.info_outline,
-                size: 20,
-                color: Colors.blueAccent,
-              ),
-              label: const Text(
-                "View Delivery Details",
-                style: TextStyle(
-                  color: Colors.blueAccent,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 15),
-          Row(
-            children: [
-              Expanded(
-                child: ElevatedButton(
-                  onPressed: () => _acceptRide(docId),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xFF00C853),
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: const Text(
-                    "Accept",
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.white,
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 15),
-              Expanded(
-                child: OutlinedButton(
-                  onPressed: () => _declineRide(docId),
-                  style: OutlinedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 14),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                  ),
-                  child: Text(
-                    "Decline",
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.grey[600],
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
+    // This old method showed individual ride cards with Accept/Decline
+    // NOW REPLACED by RideRequestPopup which shows as a dialog
+    return Container(); // Placeholder - not used
   }
+  */
+
+  // ============================================================================
+  // END OF OLD METHODS
+  // ============================================================================
 
   Widget _buildRecentRidesList() {
     return StreamBuilder<QuerySnapshot>(

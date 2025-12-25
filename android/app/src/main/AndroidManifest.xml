@@ -68,6 +68,13 @@
         <meta-data
             android:name="com.google.firebase.messaging.default_notification_icon"
             android:resource="@mipmap/ic_launcher" />
+        <!-- Geolocator foreground service notification -->
+        <meta-data
+            android:name="com.baseflow.geolocator.notification_icon"
+            android:resource="@mipmap/ic_launcher" />
+        <meta-data
+            android:name="com.baseflow.geolocator.notification_channel_name"
+            android:value="Location Service" />
     </application>
     <!-- Required to query activities that can process text, see:
          https://developer.android.com/training/package-visibility and

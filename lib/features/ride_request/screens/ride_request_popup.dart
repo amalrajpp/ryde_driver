@@ -7,8 +7,8 @@ import 'package:flutter/services.dart';
 class RideRequestPopup extends StatefulWidget {
   final String rideId;
   final Map<String, dynamic> rideData;
-  final VoidCallback onAccept;
-  final VoidCallback onDecline;
+  final Future<void> Function() onAccept;
+  final Future<void> Function() onDecline;
   final int timeoutSeconds;
 
   const RideRequestPopup({
@@ -89,10 +89,35 @@ class _RideRequestPopupState extends State<RideRequestPopup>
     }
   }
 
-  void _handleTimeout() {
+  void _handleTimeout() async {
+    if (_isProcessing) return;
+
+    setState(() {
+      _isProcessing = true;
+    });
+
     _timer.cancel();
-    widget.onDecline();
-    _slideController.reverse().then((_) => Navigator.of(context).pop());
+
+    try {
+      // Wait for decline operation to complete
+      await widget.onDecline();
+
+      // Add small delay before closing popup
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // Close popup safely
+      if (mounted) {
+        await _slideController.reverse();
+        if (mounted && Navigator.canPop(context)) {
+          Navigator.of(context).pop();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error handling timeout: $e');
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.of(context).pop();
+      }
+    }
   }
 
   void _handleAccept() async {
@@ -103,16 +128,58 @@ class _RideRequestPopupState extends State<RideRequestPopup>
     });
 
     _timer.cancel();
-    widget.onAccept();
-    _slideController.reverse().then((_) => Navigator.of(context).pop());
+
+    try {
+      // Wait for accept operation to complete
+      await widget.onAccept();
+
+      // Add small delay before closing popup
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // Close popup safely
+      if (mounted) {
+        await _slideController.reverse();
+        if (mounted && Navigator.canPop(context)) {
+          Navigator.of(context).pop();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error handling accept: $e');
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.of(context).pop();
+      }
+    }
   }
 
-  void _handleDecline() {
+  void _handleDecline() async {
     if (_isProcessing) return;
 
+    setState(() {
+      _isProcessing = true;
+    });
+
     _timer.cancel();
-    widget.onDecline();
-    _slideController.reverse().then((_) => Navigator.of(context).pop());
+
+    try {
+      // Wait for decline operation to complete
+      await widget.onDecline();
+
+      // Add small delay before closing popup
+      await Future.delayed(const Duration(milliseconds: 100));
+
+      // Close popup safely
+      if (mounted) {
+        await _slideController.reverse();
+        if (mounted && Navigator.canPop(context)) {
+          Navigator.of(context).pop();
+        }
+      }
+    } catch (e) {
+      debugPrint('Error handling decline: $e');
+      if (mounted && Navigator.canPop(context)) {
+        Navigator.of(context).pop();
+      }
+    }
   }
 
   String _formatTime(int seconds) {

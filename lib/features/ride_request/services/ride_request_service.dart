@@ -30,6 +30,7 @@ class RideRequestService with WidgetsBindingObserver {
         WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed;
     debugPrint('📱 Initial lifecycle state: $_currentLifecycleState');
     _setupFCMListeners();
+    _checkInitialMessage(); // Check if app was opened from notification
     _startListeningForRideRequests();
   }
 
@@ -37,6 +38,11 @@ class RideRequestService with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     _currentLifecycleState = state;
     debugPrint('📱 App lifecycle changed to: $state');
+
+    // When app comes to foreground, update the state immediately
+    if (state == AppLifecycleState.resumed) {
+      debugPrint('✅ App is now in foreground and active');
+    }
   }
 
   // Setup Firebase Cloud Messaging listeners
@@ -64,6 +70,60 @@ class RideRequestService with WidgetsBindingObserver {
         }
       }
     });
+  }
+
+  // Check if app was opened from a notification when it was killed
+  Future<void> _checkInitialMessage() async {
+    try {
+      debugPrint('🔍 Checking if app was opened from notification...');
+
+      // Get the message that opened the app (if any)
+      final RemoteMessage? initialMessage = await FirebaseMessaging.instance
+          .getInitialMessage();
+
+      if (initialMessage != null) {
+        debugPrint(
+          '🔔 App was opened from notification: ${initialMessage.notification?.title}',
+        );
+        debugPrint('🔔 Notification data: ${initialMessage.data}');
+
+        if (initialMessage.data['type'] == 'new_ride_request') {
+          final rideId = initialMessage.data['ride_id'];
+          if (rideId != null) {
+            debugPrint(
+              '📲 Processing ride request from initial message: $rideId',
+            );
+
+            // Wait for UI to be ready and context to be available
+            // Check multiple times with delays
+            for (int i = 0; i < 10; i++) {
+              await Future.delayed(const Duration(milliseconds: 500));
+
+              if (_activeContext != null && _activeContext!.mounted) {
+                debugPrint('✅ Context is ready after ${(i + 1) * 500}ms');
+                break;
+              }
+
+              debugPrint('⏳ Waiting for context... attempt ${i + 1}/10');
+            }
+
+            if (_activeContext == null || !_activeContext!.mounted) {
+              debugPrint(
+                '❌ Context not available after 5 seconds, cannot show ride request',
+              );
+              return;
+            }
+
+            // Fetch and show the ride request
+            _fetchAndShowRideRequest(rideId);
+          }
+        }
+      } else {
+        debugPrint('ℹ️ App was not opened from a notification');
+      }
+    } catch (e) {
+      debugPrint('❌ Error checking initial message: $e');
+    }
   }
 
   // Start listening for new ride requests via Firestore
@@ -113,12 +173,12 @@ class RideRequestService with WidgetsBindingObserver {
 
     debugPrint('✅ RideRequestService: Starting to listen for pending rides...');
 
-    // Calculate cutoff time - only show requests from the last 10 seconds
-    final cutoffTime = DateTime.now().subtract(const Duration(seconds: 10));
+    // Calculate cutoff time - only show requests from the last 30 seconds
+    final cutoffTime = DateTime.now().subtract(const Duration(seconds: 30));
     debugPrint('⏰ Only showing requests after: $cutoffTime');
 
     // Listen to pending ride requests matching driver's vehicle type
-    // Only get requests created in the last 10 seconds
+    // Only get requests created in the last 30 seconds
     _rideRequestSubscription = FirebaseFirestore.instance
         .collection('booking')
         .where('status', isEqualTo: 'pending')
@@ -140,17 +200,28 @@ class RideRequestService with WidgetsBindingObserver {
 
                 // Check if this request was created before the service started
                 // If so, it's an old request and should be ignored
+                // UNLESS it's within the last 30 seconds (might be from notification)
                 final createdAt = rideData['created_at'] as Timestamp?;
                 if (createdAt != null && _serviceStartTime != null) {
                   final requestTime = createdAt.toDate();
-                  if (requestTime.isBefore(_serviceStartTime!)) {
+                  final now = DateTime.now();
+                  final isRecentRequest =
+                      now.difference(requestTime).inSeconds <= 30;
+
+                  if (requestTime.isBefore(_serviceStartTime!) &&
+                      !isRecentRequest) {
                     debugPrint(
-                      '⏭️ RideRequestService: Ride $rideId created before service started, skipping',
+                      '⏭️ RideRequestService: Ride $rideId created before service started and is old, skipping',
                     );
                     _processedRideIds.add(
                       rideId,
                     ); // Mark as processed to avoid showing later
                     continue;
+                  } else if (requestTime.isBefore(_serviceStartTime!) &&
+                      isRecentRequest) {
+                    debugPrint(
+                      '✅ RideRequestService: Ride $rideId created before service started but is recent (${now.difference(requestTime).inSeconds}s ago), will process',
+                    );
                   }
                 }
 
@@ -317,24 +388,38 @@ class RideRequestService with WidgetsBindingObserver {
   // Fetch and show ride request by ID
   Future<void> _fetchAndShowRideRequest(String rideId) async {
     try {
+      debugPrint('📥 Fetching ride request: $rideId');
+
       final rideDoc = await FirebaseFirestore.instance
           .collection('booking')
           .doc(rideId)
           .get();
 
-      if (!rideDoc.exists) return;
+      if (!rideDoc.exists) {
+        debugPrint('❌ Ride document does not exist: $rideId');
+        return;
+      }
 
       final rideData = rideDoc.data() as Map<String, dynamic>;
       final status = rideData['status'] ?? '';
+
+      debugPrint('📋 Ride status: $status');
+      debugPrint('📋 Already processed: ${_processedRideIds.contains(rideId)}');
+      debugPrint('📋 Already declined: ${_declinedRideIds.contains(rideId)}');
 
       // Only show if still pending
       if (status == 'pending' &&
           !_processedRideIds.contains(rideId) &&
           !_declinedRideIds.contains(rideId)) {
+        debugPrint('✅ Showing ride request popup for: $rideId');
         _showRideRequestPopup(rideId, rideData);
+      } else {
+        debugPrint(
+          '⏭️ Skipping ride request (status: $status, processed: ${_processedRideIds.contains(rideId)}, declined: ${_declinedRideIds.contains(rideId)})',
+        );
       }
     } catch (e) {
-      debugPrint('Error fetching ride request: $e');
+      debugPrint('❌ Error fetching ride request: $e');
     }
   }
 
@@ -367,19 +452,35 @@ class RideRequestService with WidgetsBindingObserver {
 
     if (isInBackground) {
       debugPrint('🔔 App in background - automatically bringing to foreground');
+      debugPrint('🔍 [Debug] Current lifecycle: $_currentLifecycleState');
+      debugPrint('🔍 [Debug] Context mounted: ${_activeContext?.mounted}');
 
       // Automatically bring app to foreground
       try {
-        await AppLauncherService.bringToForeground();
-        debugPrint('✅ App brought to foreground successfully');
+        final success = await AppLauncherService.bringToForeground();
+        if (success) {
+          debugPrint('✅ App brought to foreground successfully');
+        } else {
+          debugPrint('⚠️ bringToForeground returned false');
+        }
 
-        // Wait a moment for the app to come to foreground before showing popup
-        await Future.delayed(const Duration(milliseconds: 500));
+        // Wait longer for the app to fully come to foreground and stabilize
+        await Future.delayed(const Duration(milliseconds: 1000));
+        debugPrint('✅ App should now be stable and ready');
       } catch (e) {
         debugPrint('❌ Error bringing app to foreground: $e');
+        debugPrint('❌ Stack trace: ${StackTrace.current}');
       }
     } else {
       debugPrint('📱 App in foreground - will show in-app popup only');
+    }
+
+    // Verify context is still valid before showing popup
+    if (_activeContext == null || !_activeContext!.mounted) {
+      debugPrint(
+        '❌ Context lost after bringing to foreground, cannot show popup',
+      );
+      return;
     }
 
     // Always show in-app popup (will appear when app comes to foreground)
@@ -484,10 +585,29 @@ class RideRequestService with WidgetsBindingObserver {
 
       // Close the popup
       if (_activeContext != null && _activeContext!.mounted) {
-        Navigator.of(_activeContext!).pop();
+        try {
+          Navigator.of(_activeContext!).pop();
+          debugPrint('✅ Popup closed after accept');
+        } catch (e) {
+          debugPrint('⚠️ Error closing popup: $e');
+          // Try alternative way to close
+          try {
+            Navigator.pop(_activeContext!);
+          } catch (e2) {
+            debugPrint('⚠️ Could not close popup: $e2');
+          }
+        }
       }
     } catch (e) {
       debugPrint('❌ Error accepting ride: $e');
+      // Still try to close popup on error
+      if (_activeContext != null && _activeContext!.mounted) {
+        try {
+          Navigator.of(_activeContext!).pop();
+        } catch (e2) {
+          debugPrint('⚠️ Could not close popup after error: $e2');
+        }
+      }
     }
   }
 
@@ -514,7 +634,18 @@ class RideRequestService with WidgetsBindingObserver {
 
     // Close the popup
     if (_activeContext != null && _activeContext!.mounted) {
-      Navigator.of(_activeContext!).pop();
+      try {
+        Navigator.of(_activeContext!).pop();
+        debugPrint('✅ Popup closed after decline');
+      } catch (e) {
+        debugPrint('⚠️ Error closing popup: $e');
+        // Try alternative way to close
+        try {
+          Navigator.pop(_activeContext!);
+        } catch (e2) {
+          debugPrint('⚠️ Could not close popup: $e2');
+        }
+      }
     }
   }
 
